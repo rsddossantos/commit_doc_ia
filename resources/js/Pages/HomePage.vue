@@ -1,21 +1,58 @@
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
+import axios from 'axios'
 import SearchInput from "@/Components/SearchInput.vue";
 
-const darkMode = ref(false)
 const selectedBranch = ref(null)
 const branchSearch = reactive({})
 const activePanel = ref(null)
 const search = ref('')
+const isProcessing = ref(false)
+const errorMessage = ref('')
+const lastTotal = ref(null)
 
 const props = defineProps({
     repos: {
         type: Array,
         default: () => []
+    },
+    user: {
+        type: Object,
+        default: () => ({})
     }
 })
 const repos = reactive(props.repos || []);
+const displayName = computed(() => props.user?.name || props.user?.login || 'Usuário')
+const primaryOwner = computed(() => {
+    const counts = new Map()
+    for (const repo of repos) {
+        const owner = repo.owner
+        if (!owner) continue
+        counts.set(owner, (counts.get(owner) || 0) + 1)
+    }
+    if (counts.size === 0) return '-'
+
+    const userLogin = props.user?.login
+    let primary = null
+    let max = -1
+    for (const [owner, count] of counts.entries()) {
+        if (owner === userLogin) continue
+        if (count > max) {
+            max = count
+            primary = owner
+        }
+    }
+    if (primary) return primary
+
+    for (const [owner, count] of counts.entries()) {
+        if (count > max) {
+            max = count
+            primary = owner
+        }
+    }
+    return primary || '-'
+})
 
 const filteredRepos = computed(() => {
     if (!search.value) return repos
@@ -33,13 +70,14 @@ const pagedRepos = computed(() => {
     return filteredRepos.value.slice(start, start + perPage)
 })
 
-function toggleTheme() {
-    darkMode.value = !darkMode.value
-    document.body.classList.toggle('v-theme--dark', darkMode.value)
-}
+watch(search, () => {
+    currentPage.value = 1
+})
 
-function selectBranch(repoName, branchName) {
-    selectedBranch.value = { repo: repoName, branch: branchName }
+function selectBranch(owner, repoName, branchName) {
+    selectedBranch.value = { owner, repo: repoName, branch: branchName }
+    errorMessage.value = ''
+    lastTotal.value = null
 }
 
 function logout() {
@@ -54,9 +92,26 @@ function prevPage() {
     if (currentPage.value > 1) currentPage.value--
 }
 
-function processBranch() {
-    if (!selectedBranch.value) return
-    console.log('Processando', selectedBranch.value)
+async function processBranch() {
+    if (!selectedBranch.value || isProcessing.value) return
+    isProcessing.value = true
+    errorMessage.value = ''
+    lastTotal.value = null
+
+    try {
+        const { data } = await axios.post('/commits', {
+            owner: selectedBranch.value.owner,
+            repo: selectedBranch.value.repo,
+            branch: selectedBranch.value.branch,
+        })
+        lastTotal.value = data.total
+        console.log('Commits carregados', data)
+    } catch (error) {
+        errorMessage.value = error?.response?.data?.message || 'Erro ao processar commits.'
+        console.error(error)
+    } finally {
+        isProcessing.value = false
+    }
 }
 
 function clearSearch() {
@@ -65,13 +120,33 @@ function clearSearch() {
 </script>
 
 <template>
-    <v-app :class="{ 'v-theme--dark': darkMode }">
+    <v-app>
         <v-toolbar color="primary" dark elevation="2" height="64">
             <v-toolbar-title class="font-weight-bold white--text">CommitDoc AI</v-toolbar-title>
             <v-spacer></v-spacer>
-            <v-btn icon @click="toggleTheme">
-                <v-icon>mdi-weather-sunny</v-icon>
-            </v-btn>
+            <v-menu>
+                <template #activator="{ props: menuProps }">
+                    <v-btn v-bind="menuProps" variant="text" class="text-none">
+                        <v-icon start>mdi-account</v-icon>
+                        {{ displayName }}
+                        <v-icon end>mdi-menu-down</v-icon>
+                    </v-btn>
+                </template>
+                <v-list>
+                    <v-list-item disabled>
+                        <v-list-item-title class="font-weight-bold">
+                            Organização: {{ primaryOwner }}
+                        </v-list-item-title>
+                    </v-list-item>
+                    <v-divider />
+                    <v-list-item disabled>
+                        <v-list-item-title>Login: {{ props.user?.login || '-' }}</v-list-item-title>
+                    </v-list-item>
+                    <v-list-item disabled>
+                        <v-list-item-title>Nome: {{ props.user?.name || '-' }}</v-list-item-title>
+                    </v-list-item>
+                </v-list>
+            </v-menu>
             <v-btn icon @click="logout">
                 <v-icon>mdi-logout</v-icon>
             </v-btn>
@@ -105,7 +180,7 @@ function clearSearch() {
                                         <v-list-item
                                             v-for="branch in repo.branches.filter(b => !branchSearch[repo.name] || b.toLowerCase().includes(branchSearch[repo.name].toLowerCase()))"
                                             :key="branch"
-                                            @click="selectBranch(repo.name, branch)"
+                                            @click="selectBranch(repo.owner, repo.name, branch)"
                                             :class="{ 'selected-branch': selectedBranch?.repo === repo.name && selectedBranch?.branch === branch }"
                                         >
                                             <v-list-item-title>{{ branch }}</v-list-item-title>
@@ -125,14 +200,25 @@ function clearSearch() {
                 <v-row class="mt-12">
                     <v-col cols="12">
                         <v-btn
-                            :disabled="!selectedBranch"
+                            :disabled="!selectedBranch || isProcessing"
                             color="primary"
                             large
                             block
                             @click="processBranch"
                         >
-                            PROCESSAR
+                            {{ isProcessing ? 'PROCESSANDO...' : 'PROCESSAR' }}
                         </v-btn>
+                    </v-col>
+                </v-row>
+
+                <v-row class="mt-4" v-if="errorMessage || lastTotal !== null">
+                    <v-col cols="12">
+                        <v-alert v-if="errorMessage" type="error" variant="tonal">
+                            {{ errorMessage }}
+                        </v-alert>
+                        <v-alert v-else type="success" variant="tonal">
+                            {{ lastTotal }} commits carregados.
+                        </v-alert>
                     </v-col>
                 </v-row>
             </v-container>

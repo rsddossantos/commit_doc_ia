@@ -37,7 +37,7 @@ function clear() {
     align-items: center;
     border: 1px solid #ccc;
     border-radius: 8px;
-    padding: 0px 10px;
+    padding: 0 10px;
     background-color: #fff;
 }
 
@@ -67,8 +67,7 @@ function clear() {
 .search-wrapper input:focus {
     outline: none;
     border-color: #FFFFFF;
-    border-radius: 5px;
-    box-shadow: 0 0 0 2px rgba(0,0,0,0.00);
+    box-shadow: none !important;
 }
 
 </style>

@@ -10,6 +10,8 @@ import 'vuetify/styles'
 import * as vuetifyComponents from 'vuetify/components'
 import * as vuetifyDirectives from 'vuetify/directives'
 
+const appName = document.querySelector('title')?.innerText || 'CommitDoc AI'
+
 const vuetify = createVuetify({
     theme: {
         defaultTheme: 'light',
@@ -45,6 +47,7 @@ const vuetify = createVuetify({
 })
 
 createInertiaApp({
+    title: title => (title ? `${title} - ${appName}` : appName),
     resolve: name =>
         resolvePageComponent(`./Pages/${name}.vue`, import.meta.glob('./Pages/**/*.vue')),
     setup({ el, App, props, plugin }) {

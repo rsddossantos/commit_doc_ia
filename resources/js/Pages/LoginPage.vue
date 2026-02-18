@@ -32,7 +32,15 @@ function submit() {
                     </v-card-title>
 
                     <v-alert
-                        v-if="$page.props.error"
+                        v-if="loading"
+                        type="info"
+                        class="mb-4"
+                        border="left"
+                    >
+                        Coletando todos os repos e branches, isso pode demorar...
+                    </v-alert>
+                    <v-alert
+                        v-else-if="$page.props.error"
                         type="error"
                         class="mb-4"
                         border="left"
@@ -44,6 +52,7 @@ function submit() {
                         v-model="token"
                         label="Entre com seu token Github"
                         type="password"
+                        class="login-token-field"
                     />
 
                     <v-btn
@@ -68,20 +77,17 @@ function submit() {
     padding: 0;
 }
 
-.v-card {
-    background: #ffffffee;
-}
-
-.v-card-title {
-    color: #333;
-    font-family: 'Figtree', sans-serif;
-}
-
 .v-text-field input {
     font-size: 14px;
+    border-radius: 0 !important;
 }
 
-.v-btn {
-    font-weight: 600;
+:deep(.login-token-field .v-field__overlay),
+:deep(.login-token-field .v-field),
+:deep(.login-token-field .v-field__outline),
+:deep(.login-token-field .v-field__outline__start),
+:deep(.login-token-field .v-field__outline__end),
+:deep(.login-token-field .v-field__outline__notch) {
+    border-radius: 0 !important;
 }
 </style>
