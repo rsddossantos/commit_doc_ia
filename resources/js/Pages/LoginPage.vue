@@ -37,7 +37,7 @@ function submit() {
                         class="mb-4"
                         border="left"
                     >
-                        Coletando todos os repos e branches, isso pode demorar...
+                        Autenticando e coletando todos os repositórios/branches, isso pode demorar...
                     </v-alert>
                     <v-alert
                         v-else-if="$page.props.error"

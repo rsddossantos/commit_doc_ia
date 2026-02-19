@@ -74,8 +74,8 @@ watch(search, () => {
     currentPage.value = 1
 })
 
-function selectBranch(owner, repoName, branchName) {
-    selectedBranch.value = { owner, repo: repoName, branch: branchName }
+function selectBranch(owner, repoName, branchName, isPrimary) {
+    selectedBranch.value = { owner, repo: repoName, branch: branchName, isPrimary: !!isPrimary }
     errorMessage.value = ''
     lastTotal.value = null
 }
@@ -103,6 +103,7 @@ async function processBranch() {
             owner: selectedBranch.value.owner,
             repo: selectedBranch.value.repo,
             branch: selectedBranch.value.branch,
+            is_primary: selectedBranch.value.isPrimary,
         })
         lastTotal.value = data.total
         console.log('Commits carregados', data)
@@ -116,6 +117,11 @@ async function processBranch() {
 
 function clearSearch() {
     search.value = ''
+}
+
+function getFilteredBranches(repo) {
+    const term = branchSearch[repo.name]?.toLowerCase()
+    return repo.branches.filter(branch => !term || branch.name.toLowerCase().includes(term))
 }
 </script>
 
@@ -175,15 +181,20 @@ function clearSearch() {
                                         v-model="branchSearch[repo.name]"
                                         placeholder="Pesquisar branches"
                                         wrapperClass="mb-4"
+                                        class="mb-2"
                                     />
-                                    <v-list dense>
+                                    <v-list dense class="branch-panel">
                                         <v-list-item
-                                            v-for="branch in repo.branches.filter(b => !branchSearch[repo.name] || b.toLowerCase().includes(branchSearch[repo.name].toLowerCase()))"
-                                            :key="branch"
-                                            @click="selectBranch(repo.owner, repo.name, branch)"
-                                            :class="{ 'selected-branch': selectedBranch?.repo === repo.name && selectedBranch?.branch === branch }"
+                                            v-for="branch in getFilteredBranches(repo)"
+                                            :key="branch.name"
+                                            @click="selectBranch(repo.owner, repo.name, branch.name, branch.is_primary)"
+                                            :class="{ 'selected-branch': selectedBranch?.repo === repo.name && selectedBranch?.branch === branch.name }"
                                         >
-                                            <v-list-item-title>{{ branch }}</v-list-item-title>
+                                            <v-list-item-title>
+                                                <span :class="{ 'branch-primary-name': branch.is_primary }">
+                                                    {{ branch.name }}
+                                                </span>
+                                            </v-list-item-title>
                                         </v-list-item>
                                     </v-list>
                                 </v-expansion-panel-text>
@@ -254,6 +265,15 @@ function clearSearch() {
 .active-hover {
     background-color: rgba(0, 123, 255, 0.1);
     transition: background 0.2s;
+}
+
+.branch-panel {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.branch-primary-name {
+    font-weight: 700;
 }
 
 </style>

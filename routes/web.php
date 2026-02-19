@@ -19,7 +19,7 @@ Route::post('/login', [LoginController::class, 'login']);
 Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
 
 Route::get('/home', [HomeController::class, 'index'])->name('home');
-Route::post('/commits', [HomeController::class, 'commits'])->name('commits');
+Route::post('/commits', [HomeController::class, 'searchCommits'])->name('commits');
 
 
 

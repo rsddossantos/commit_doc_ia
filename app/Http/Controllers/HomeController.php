@@ -61,7 +61,20 @@ class HomeController extends Controller
                 ->get(str_replace('{/branch}', '', $repo['branches_url']));
             $branches = [];
             if (!$branchesResponse->failed()) {
-                $branches = collect($branchesResponse->json())->pluck('name');
+                $defaultBranch = $repo['default_branch'] ?? null;
+                $branchesCollection = collect($branchesResponse->json())
+                    ->map(function ($branch) use ($defaultBranch) {
+                        $name = $branch['name'] ?? null;
+                        return [
+                            'name' => $name,
+                            'is_primary' => $name && $defaultBranch && $name === $defaultBranch,
+                        ];
+                    })
+                    ->filter(fn ($branch) => $branch['name']);
+
+                $primary = $branchesCollection->filter(fn ($branch) => $branch['is_primary']);
+                $others = $branchesCollection->reject(fn ($branch) => $branch['is_primary']);
+                $branches = $primary->concat($others)->values();
             }
             return [
                 'owner' => $repo['owner']['login'] ?? null,
@@ -79,7 +92,7 @@ class HomeController extends Controller
         ]);
     }
 
-    public function commits(Request $request)
+    public function searchCommits(Request $request)
     {
         set_time_limit(300);
         $request->validate([
