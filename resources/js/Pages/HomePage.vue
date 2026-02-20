@@ -10,7 +10,7 @@ const activePanel = ref(null)
 const search = ref('')
 const isProcessing = ref(false)
 const errorMessage = ref('')
-const lastTotal = ref(null)
+const totals = ref(null)
 
 const props = defineProps({
     repos: {
@@ -77,7 +77,7 @@ watch(search, () => {
 function selectBranch(owner, repoName, branchName, isPrimary) {
     selectedBranch.value = { owner, repo: repoName, branch: branchName, isPrimary: !!isPrimary }
     errorMessage.value = ''
-    lastTotal.value = null
+    totals.value = null
 }
 
 function logout() {
@@ -96,16 +96,17 @@ async function processBranch() {
     if (!selectedBranch.value || isProcessing.value) return
     isProcessing.value = true
     errorMessage.value = ''
-    lastTotal.value = null
+    totals.value = null
 
     try {
         const { data } = await axios.post('/commits', {
             owner: selectedBranch.value.owner,
             repo: selectedBranch.value.repo,
             branch: selectedBranch.value.branch,
-            is_primary: selectedBranch.value.isPrimary,
         })
-        lastTotal.value = data.total
+        totals.value = {
+            total: data.total ?? 0,
+        }
         console.log('Commits carregados', data)
     } catch (error) {
         errorMessage.value = error?.response?.data?.message || 'Erro ao processar commits.'
@@ -208,7 +209,7 @@ function getFilteredBranches(repo) {
                     <v-btn outlined @click="nextPage" :disabled="currentPage === totalPages">Próxima</v-btn>
                 </v-row>
 
-                <v-row class="mt-12">
+                <v-row class="mt-12" v-if="!totals">
                     <v-col cols="12">
                         <v-btn
                             :disabled="!selectedBranch || isProcessing"
@@ -217,19 +218,28 @@ function getFilteredBranches(repo) {
                             block
                             @click="processBranch"
                         >
-                            {{ isProcessing ? 'PROCESSANDO...' : 'PROCESSAR' }}
+                            <span v-if="isProcessing">PROCESSANDO...</span>
+                            <span v-else>PROCESSAR</span>
                         </v-btn>
                     </v-col>
                 </v-row>
 
-                <v-row class="mt-4" v-if="errorMessage || lastTotal !== null">
+                <v-row class="mt-12" v-if="errorMessage || totals">
                     <v-col cols="12">
                         <v-alert v-if="errorMessage" type="error" variant="tonal">
                             {{ errorMessage }}
                         </v-alert>
                         <v-alert v-else type="success" variant="tonal">
-                            {{ lastTotal }} commits carregados.
+                            {{ totals.total }} commits carregados.
                         </v-alert>
+                    </v-col>
+                </v-row>
+
+                <v-row class="mt-8" v-if="totals">
+                    <v-col cols="12">
+                        <v-btn color="primary" large block>
+                            GERAR DOCUMENTACAO
+                        </v-btn>
                     </v-col>
                 </v-row>
             </v-container>

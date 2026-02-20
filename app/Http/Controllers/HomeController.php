@@ -115,9 +115,26 @@ class HomeController extends Controller
         $repo = $request->input('repo');
         $branch = $request->input('branch');
 
+        $mainCommits = $this->fetchCommits($options, $token, $owner, $repo, $branch);
+        if ($mainCommits['failed']) {
+            return response()->json([
+                'message' => 'Falha ao buscar commits no GitHub.',
+                'details' => $mainCommits['details'],
+            ], $mainCommits['status']);
+        }
+
+        return response()->json([
+            'total' => count($mainCommits['items']),
+            'commits' => $mainCommits['items'],
+        ]);
+    }
+
+    private function fetchCommits(array $options, string $token, string $owner, string $repo, string $branch): array
+    {
         $page = 1;
         $perPage = 100;
-        $allCommits = [];
+        $items = [];
+        $raw = [];
 
         while (true) {
             $response = Http::withOptions($options)
@@ -129,10 +146,11 @@ class HomeController extends Controller
                 ]);
 
             if ($response->failed()) {
-                return response()->json([
-                    'message' => 'Falha ao buscar commits no GitHub.',
+                return [
+                    'failed' => true,
+                    'status' => $response->status(),
                     'details' => $response->json(),
-                ], $response->status());
+                ];
             }
 
             $batch = $response->json();
@@ -141,22 +159,39 @@ class HomeController extends Controller
             }
 
             foreach ($batch as $commit) {
-                $allCommits[] = [
+                $raw[] = $commit;
+                $message = $commit['commit']['message'] ?? null;
+                $author = $commit['commit']['author']['name'] ?? null;
+                $firstLine = trim(strtok($message ?? '', "\n") ?: '');
+
+                if (!$firstLine) {
+                    continue;
+                }
+                if (!$author) {
+                    continue;
+                }
+                if (preg_match('/^Merge\s/i', $firstLine)) {
+                    continue;
+                }
+
+                $items[] = [
                     'sha' => $commit['sha'] ?? null,
-                    'message' => $commit['commit']['message'] ?? null,
+                    'message' => $message,
                     'date' => $commit['commit']['author']['date'] ?? null,
-                    'author' => $commit['commit']['author']['name'] ?? null,
+                    'author' => $author,
                 ];
             }
 
             $page++;
         }
 
-        $allCommits = array_reverse($allCommits);
+        $items = array_reverse($items);
+        $raw = array_reverse($raw);
 
-        return response()->json([
-            'total' => count($allCommits),
-            'commits' => $allCommits,
-        ]);
+        return [
+            'failed' => false,
+            'items' => $items,
+            'raw' => $raw,
+        ];
     }
 }
