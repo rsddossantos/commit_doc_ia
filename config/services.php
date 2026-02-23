@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'cohere' => [
+        'key' => env('COHERE_API_KEY'),
+        'model' => env('COHERE_MODEL', 'command-a-03-2025'),
+        'endpoint' => env('COHERE_ENDPOINT', 'https://api.cohere.ai/v2/chat'),
+    ],
+
 ];

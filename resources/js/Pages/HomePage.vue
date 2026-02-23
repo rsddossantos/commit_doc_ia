@@ -9,8 +9,12 @@ const branchSearch = reactive({})
 const activePanel = ref(null)
 const search = ref('')
 const isProcessing = ref(false)
+const isGeneratingDoc = ref(false)
 const errorMessage = ref('')
+const docErrorMessage = ref('')
 const totals = ref(null)
+const commits = ref([])
+const documentation = ref('')
 
 const props = defineProps({
     repos: {
@@ -77,7 +81,10 @@ watch(search, () => {
 function selectBranch(owner, repoName, branchName, isPrimary) {
     selectedBranch.value = { owner, repo: repoName, branch: branchName, isPrimary: !!isPrimary }
     errorMessage.value = ''
+    docErrorMessage.value = ''
     totals.value = null
+    commits.value = []
+    documentation.value = ''
 }
 
 function logout() {
@@ -94,9 +101,13 @@ function prevPage() {
 
 async function processBranch() {
     if (!selectedBranch.value || isProcessing.value) return
+    activePanel.value = null
     isProcessing.value = true
     errorMessage.value = ''
+    docErrorMessage.value = ''
     totals.value = null
+    commits.value = []
+    documentation.value = ''
 
     try {
         const { data } = await axios.post('/commits', {
@@ -107,12 +118,36 @@ async function processBranch() {
         totals.value = {
             total: data.total ?? 0,
         }
+        commits.value = Array.isArray(data.commits) ? data.commits : []
         console.log('Commits carregados', data)
     } catch (error) {
         errorMessage.value = error?.response?.data?.message || 'Erro ao processar commits.'
         console.error(error)
     } finally {
         isProcessing.value = false
+    }
+}
+
+async function generateDocumentation() {
+    if (!selectedBranch.value || isGeneratingDoc.value || commits.value.length === 0) return
+
+    isGeneratingDoc.value = true
+    docErrorMessage.value = ''
+    documentation.value = ''
+
+    try {
+        const { data } = await axios.post('/documentation', {
+            owner: selectedBranch.value.owner,
+            repo: selectedBranch.value.repo,
+            branch: selectedBranch.value.branch,
+            commits: commits.value,
+        })
+        documentation.value = data.documentation || ''
+    } catch (error) {
+        docErrorMessage.value = error?.response?.data?.message || 'Erro ao gerar documentação.'
+        console.error(error)
+    } finally {
+        isGeneratingDoc.value = false
     }
 }
 
@@ -133,10 +168,13 @@ function getFilteredBranches(repo) {
             <v-spacer></v-spacer>
             <v-menu>
                 <template #activator="{ props: menuProps }">
-                    <v-btn v-bind="menuProps" variant="text" class="text-none">
+                    <v-btn v-bind="menuProps" variant="text" class="text-none user-menu-btn">
                         <v-icon start>mdi-account</v-icon>
                         {{ displayName }}
                         <v-icon end>mdi-menu-down</v-icon>
+                    </v-btn>
+                    <v-btn v-bind="menuProps" icon class="user-menu-btn--compact">
+                        <v-icon>mdi-account</v-icon>
                     </v-btn>
                 </template>
                 <v-list>
@@ -213,13 +251,13 @@ function getFilteredBranches(repo) {
                     <v-col cols="12">
                         <v-btn
                             :disabled="!selectedBranch || isProcessing"
+                            :loading="isProcessing"
                             color="primary"
                             large
                             block
                             @click="processBranch"
                         >
-                            <span v-if="isProcessing">PROCESSANDO...</span>
-                            <span v-else>PROCESSAR</span>
+                            PROCESSAR
                         </v-btn>
                     </v-col>
                 </v-row>
@@ -237,9 +275,30 @@ function getFilteredBranches(repo) {
 
                 <v-row class="mt-8" v-if="totals">
                     <v-col cols="12">
-                        <v-btn color="primary" large block>
+                        <v-btn
+                            color="primary"
+                            large
+                            block
+                            :loading="isGeneratingDoc"
+                            :disabled="commits.length === 0 || isGeneratingDoc"
+                            @click="generateDocumentation"
+                        >
                             GERAR DOCUMENTACAO
                         </v-btn>
+                    </v-col>
+                </v-row>
+
+                <v-row class="mt-6" v-if="docErrorMessage || documentation">
+                    <v-col cols="12">
+                        <v-alert v-if="docErrorMessage" type="error" variant="tonal">
+                            {{ docErrorMessage }}
+                        </v-alert>
+                        <v-card v-else class="documentation-card" elevation="2">
+                            <v-card-title class="text-h6">Documentação Sintetizada via IA Cohere</v-card-title>
+                            <v-card-text class="documentation-text">
+                                {{ documentation }}
+                            </v-card-text>
+                        </v-card>
                     </v-col>
                 </v-row>
             </v-container>
@@ -286,4 +345,26 @@ function getFilteredBranches(repo) {
     font-weight: 700;
 }
 
+.documentation-text {
+    white-space: pre-wrap;
+}
+
+@media (max-width: 580px) {
+    .user-menu-btn {
+        display: none;
+    }
+
+    .user-menu-btn--compact {
+        display: inline-flex;
+    }
+}
+
+@media (min-width: 581px) {
+    .user-menu-btn--compact {
+        display: none;
+    }
+}
+
 </style>
+
+

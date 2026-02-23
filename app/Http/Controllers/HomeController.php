@@ -129,6 +129,130 @@ class HomeController extends Controller
         ]);
     }
 
+    public function generateDocumentation(Request $request)
+    {
+        set_time_limit(300);
+        $request->validate([
+            'owner' => 'required|string',
+            'repo' => 'required|string',
+            'branch' => 'required|string',
+            'commits' => 'required|array|min:1',
+        ]);
+
+        $token = $request->session()->get('github_token');
+        if (!$token) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $options = [];
+        if (config('app.env') === 'homolog') {
+            $options['verify'] = false;
+        }
+
+        $commits = $request->input('commits', []);
+        if (empty($commits)) {
+            return response()->json(['message' => 'Nenhum commit encontrado para processar.'], 422);
+        }
+
+        $payload = [
+            'owner' => $request->input('owner'),
+            'repo' => $request->input('repo'),
+            'branch' => $request->input('branch'),
+            'total' => count($commits),
+            'commits' => $commits,
+        ];
+
+        $documentation = $this->sendCommitsToIA($options, $payload);
+        if ($documentation['failed']) {
+            return response()->json([
+                'message' => 'Falha ao gerar documentação.',
+                'details' => $documentation['details'],
+            ], $documentation['status']);
+        }
+
+        return response()->json([
+            'documentation' => $documentation['text'],
+        ]);
+    }
+
+    private function sendCommitsToIA(array $options, array $commitPayload): array
+    {
+        $apiKey = config('services.cohere.key');
+        if (!$apiKey) {
+            return [
+                'failed' => true,
+                'status' => 500,
+                'details' => 'COHERE_API_KEY não configurada.',
+            ];
+        }
+
+        $initialPrompt = view('prompts.commit_doc')->render();
+        $messages = collect($commitPayload['commits'] ?? [])
+            ->pluck('message')
+            ->filter(fn ($message) => is_string($message) && trim($message) !== '')
+            ->values()
+            ->all();
+
+        $commitData = [
+            'owner' => $commitPayload['owner'] ?? null,
+            'repo' => $commitPayload['repo'] ?? null,
+            'branch' => $commitPayload['branch'] ?? null,
+            'total' => $commitPayload['total'] ?? count($messages),
+            'commit_messages' => $messages,
+        ];
+
+        $payload = [
+            'model' => config('services.cohere.model', 'command-a-03-2025'),
+            'messages' => [
+                ['role' => 'system', 'content' => $initialPrompt],
+                [
+                    'role' => 'user',
+                    'content' => "Dados do repositório em JSON (apenas mensagens de commits):\n" . json_encode($commitData['commit_messages']),
+                ],
+            ],
+        ];
+
+        try {
+            $response = Http::withOptions($options)
+                ->withHeaders([
+                    'Authorization' => "Bearer {$apiKey}",
+                    'Accept' => 'application/json',
+                    'Content-Type' => 'application/json',
+                ])
+                ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $payload);
+        } catch (\Exception $e) {
+            return [
+                'failed' => true,
+                'status' => 500,
+                'details' => $e->getMessage(),
+            ];
+        }
+
+        if (!$response->ok()) {
+            return [
+                'failed' => true,
+                'status' => $response->status(),
+                'details' => $response->body(),
+            ];
+        }
+
+        $body = $response->json();
+        $text = $body['message']['content'][0]['text'] ?? null;
+
+        if (!$text) {
+            return [
+                'failed' => true,
+                'status' => 502,
+                'details' => $body,
+            ];
+        }
+
+        return [
+            'failed' => false,
+            'text' => $text,
+        ];
+    }
+
     private function fetchCommits(array $options, string $token, string $owner, string $repo, string $branch): array
     {
         $page = 1;
@@ -195,3 +319,7 @@ class HomeController extends Controller
         ];
     }
 }
+
+
+
+

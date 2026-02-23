@@ -20,7 +20,7 @@ Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
 
 Route::get('/home', [HomeController::class, 'index'])->name('home');
 Route::post('/commits', [HomeController::class, 'searchCommits'])->name('commits');
-
+Route::post('/documentation', [HomeController::class, 'generateDocumentation'])->name('documentation');
 
 
 
