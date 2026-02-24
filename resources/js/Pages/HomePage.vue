@@ -15,6 +15,7 @@ const docErrorMessage = ref('')
 const totals = ref(null)
 const commits = ref([])
 const documentation = ref('')
+const hasGeneratedDoc = ref(false)
 
 const props = defineProps({
     repos: {
@@ -80,6 +81,10 @@ watch(search, () => {
 
 function selectBranch(owner, repoName, branchName, isPrimary) {
     selectedBranch.value = { owner, repo: repoName, branch: branchName, isPrimary: !!isPrimary }
+    resetState()
+}
+
+function resetState() {
     errorMessage.value = ''
     docErrorMessage.value = ''
     totals.value = null
@@ -103,11 +108,7 @@ async function processBranch() {
     if (!selectedBranch.value || isProcessing.value) return
     activePanel.value = null
     isProcessing.value = true
-    errorMessage.value = ''
-    docErrorMessage.value = ''
-    totals.value = null
-    commits.value = []
-    documentation.value = ''
+    resetState()
 
     try {
         const { data } = await axios.post('/commits', {
@@ -143,6 +144,7 @@ async function generateDocumentation() {
             commits: commits.value,
         })
         documentation.value = data.documentation || ''
+        hasGeneratedDoc.value = true
     } catch (error) {
         docErrorMessage.value = error?.response?.data?.message || 'Erro ao gerar documentação.'
         console.error(error)
@@ -166,7 +168,11 @@ function getFilteredBranches(repo) {
         <v-toolbar color="primary" dark elevation="2" height="64">
             <v-toolbar-title class="font-weight-bold white--text">CommitDoc AI</v-toolbar-title>
             <v-spacer></v-spacer>
-            <v-menu>
+            <v-menu
+                location="bottom end"
+                origin="top right"
+                transition="fade-transition"
+            >
                 <template #activator="{ props: menuProps }">
                     <v-btn v-bind="menuProps" variant="text" class="text-none user-menu-btn">
                         <v-icon start>mdi-account</v-icon>
@@ -209,6 +215,8 @@ function getFilteredBranches(repo) {
                     <v-col cols="12" md="4" v-for="(repo, index) in pagedRepos" :key="repo.name">
                         <v-expansion-panels v-model="activePanel">
                             <v-expansion-panel :value="index + (currentPage - 1) * perPage">
+
+
                                 <v-expansion-panel-title
                                     class="font-weight-bold"
                                     :class="{ 'active-hover': selectedBranch?.repo === repo.name }"
@@ -262,7 +270,7 @@ function getFilteredBranches(repo) {
                     </v-col>
                 </v-row>
 
-                <v-row class="mt-12" v-if="errorMessage || totals">
+                <v-row class="mt-12" v-if="(errorMessage || totals) && !hasGeneratedDoc">
                     <v-col cols="12">
                         <v-alert v-if="errorMessage" type="error" variant="tonal">
                             {{ errorMessage }}
@@ -273,7 +281,7 @@ function getFilteredBranches(repo) {
                     </v-col>
                 </v-row>
 
-                <v-row class="mt-8" v-if="totals">
+                <v-row class="mt-8" v-if="totals && !hasGeneratedDoc">
                     <v-col cols="12">
                         <v-btn
                             color="primary"
