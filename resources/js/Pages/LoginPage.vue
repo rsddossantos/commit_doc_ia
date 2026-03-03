@@ -35,7 +35,7 @@ function submit() {
                         v-if="loading"
                         type="info"
                         class="mb-4"
-                        border="left"
+                        border="start"
                     >
                         Autenticando e coletando todos os repositórios/branches, isso pode demorar...
                     </v-alert>
@@ -43,7 +43,7 @@ function submit() {
                         v-else-if="$page.props.error"
                         type="error"
                         class="mb-4"
-                        border="left"
+                        border="start"
                     >
                         {{ $page.props.error }}
                     </v-alert>

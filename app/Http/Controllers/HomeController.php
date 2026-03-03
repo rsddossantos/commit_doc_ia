@@ -92,7 +92,7 @@ class HomeController extends Controller
         ]);
     }
 
-    public function searchCommits(Request $request)
+    public function processMain(Request $request)
     {
         set_time_limit(300);
         $request->validate([
@@ -317,6 +317,189 @@ class HomeController extends Controller
             'items' => $items,
             'raw' => $raw,
         ];
+    }
+
+    public function processFeature(Request $request)
+    {
+        set_time_limit(300);
+
+        $request->validate([
+            'owner' => 'required|string',
+            'repo' => 'required|string',
+            'branch' => 'required|string',
+        ]);
+
+        $token = $request->session()->get('github_token');
+        if (!$token) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $options = [];
+        if (config('app.env') === 'homolog') {
+            $options['verify'] = false;
+        }
+
+        $owner = $request->input('owner');
+        $repo = $request->input('repo');
+        $feature = $request->input('branch');
+
+        // Buscar default branch
+        $repoResponse = Http::withOptions($options)
+            ->withToken($token)
+            ->get("https://api.github.com/repos/{$owner}/{$repo}");
+
+        if ($repoResponse->failed()) {
+            return response()->json([
+                'message' => 'Falha ao buscar repositório.',
+                'details' => $repoResponse->json(),
+            ], $repoResponse->status());
+        }
+
+        $base = $repoResponse->json('default_branch');
+
+        if (!$base) {
+            return response()->json([
+                'message' => 'Branch base não encontrada.',
+            ], 422);
+        }
+
+        // Compare base...feature
+        $compareResponse = Http::withOptions($options)
+            ->withToken($token)
+            ->get("https://api.github.com/repos/{$owner}/{$repo}/compare/{$base}...{$feature}");
+
+        if ($compareResponse->failed()) {
+            return response()->json([
+                'message' => 'Falha ao comparar branches.',
+                'details' => $compareResponse->json(),
+            ], $compareResponse->status());
+        }
+
+        $compareData = $compareResponse->json();
+
+        $commits = collect($compareData['commits'] ?? [])
+            ->map(function ($commit) {
+                return [
+                    'sha' => $commit['sha'] ?? null,
+                    'message' => $commit['commit']['message'] ?? null,
+                    'date' => $commit['commit']['author']['date'] ?? null,
+                    'author' => $commit['commit']['author']['name'] ?? null,
+                ];
+            })
+            ->values()
+            ->all();
+
+        $files = collect($compareData['files'] ?? [])
+            ->map(function ($file) {
+                return [
+                    'filename' => $file['filename'] ?? null,
+                    'status' => $file['status'] ?? null,
+                    'additions' => $file['additions'] ?? 0,
+                    'deletions' => $file['deletions'] ?? 0,
+                    'changes' => $file['changes'] ?? 0,
+                    'patch' => $file['patch'] ?? null,
+                ];
+            })
+            ->values()
+            ->all();
+
+        return response()->json([
+            'base' => $base,
+            'feature' => $feature,
+            'total_commits' => count($commits),
+            'total_files' => count($files),
+            'commits' => $commits,
+            'files' => $files,
+        ]);
+    }
+
+    public function generateChangelog(Request $request)
+    {
+        set_time_limit(300);
+
+        $request->validate([
+            'owner' => 'required|string',
+            'repo' => 'required|string',
+            'branch' => 'required|string',
+            'base' => 'required|string',
+            'commits' => 'required|array',
+            'files' => 'required|array',
+        ]);
+
+        $token = $request->session()->get('github_token');
+        if (!$token) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $options = [];
+        if (config('app.env') === 'homolog') {
+            $options['verify'] = false;
+        }
+
+        $apiKey = config('services.cohere.key');
+        if (!$apiKey) {
+            return response()->json([
+                'message' => 'COHERE_API_KEY não configurada.',
+            ], 500);
+        }
+
+        $initialPrompt = view('prompts.changelog_doc')->render();
+
+        $payloadData = [
+            'owner' => $request->input('owner'),
+            'repo' => $request->input('repo'),
+            'base' => $request->input('base'),
+            'feature' => $request->input('branch'),
+            'commits' => $request->input('commits'),
+            'files' => $request->input('files'),
+        ];
+
+        $payload = [
+            'model' => config('services.cohere.model', 'command-a-03-2025'),
+            'messages' => [
+                ['role' => 'system', 'content' => $initialPrompt],
+                [
+                    'role' => 'user',
+                    'content' => "Dados da comparação em JSON:\n" . json_encode($payloadData),
+                ],
+            ],
+        ];
+
+        try {
+            $response = Http::withOptions($options)
+                ->withHeaders([
+                    'Authorization' => "Bearer {$apiKey}",
+                    'Accept' => 'application/json',
+                    'Content-Type' => 'application/json',
+                ])
+                ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $payload);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Erro ao conectar com IA.',
+                'details' => $e->getMessage(),
+            ], 500);
+        }
+
+        if (!$response->ok()) {
+            return response()->json([
+                'message' => 'Falha ao gerar changelog.',
+                'details' => $response->body(),
+            ], $response->status());
+        }
+
+        $body = $response->json();
+        $text = $body['message']['content'][0]['text'] ?? null;
+
+        if (!$text) {
+            return response()->json([
+                'message' => 'Resposta inválida da IA.',
+                'details' => $body,
+            ], 502);
+        }
+
+        return response()->json([
+            'changelog' => $text,
+        ]);
     }
 }
 
