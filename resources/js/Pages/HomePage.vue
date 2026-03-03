@@ -119,7 +119,7 @@ async function processBranch() {
 
     } catch (e) {
         errorMessage.value =
-            e.response?.data?.message || 'Erro ao processar'
+            e.response?.data?.message || 'Não obteve resposta do servidor'
     } finally {
         isProcessing.value = false
     }
