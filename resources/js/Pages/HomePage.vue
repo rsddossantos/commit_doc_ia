@@ -10,7 +10,6 @@ const isProcessing = ref(false)
 const isGenerating = ref(false)
 const isGeneratingChangelog = ref(false)
 const errorMessage = ref('')
-const changelogError = ref('')
 const documentation = ref('')
 const changelog = ref('')
 const compareData = ref(null)
@@ -83,7 +82,6 @@ function toggleRepo(repo) {
 
 function resetState() {
     errorMessage.value = ''
-    changelogError.value = ''
     documentation.value = ''
     changelog.value = ''
     compareData.value = null
@@ -116,8 +114,12 @@ async function processRepo() {
         compareData.value = response.data
 
     } catch (e) {
-        errorMessage.value =
-            e.response?.data?.message || 'Erro ao processar'
+        const message = e.response?.data?.message || 'Erro não mapeado'
+        const details = e.response?.data?.details
+
+        errorMessage.value = details
+            ? `${message}: ${details}`
+            : message
     } finally {
         isProcessing.value = false
     }
@@ -126,6 +128,9 @@ async function processRepo() {
 async function generateDocumentation() {
     if (!compareData.value?.commits?.length) return
 
+    errorMessage.value = ''
+    documentation.value = ''
+    changelog.value = ''
     isGenerating.value = true
 
     try {
@@ -137,8 +142,12 @@ async function generateDocumentation() {
         documentation.value = response.data.documentation
 
     } catch (e) {
-        errorMessage.value =
-            e.response?.data?.message || 'Erro ao gerar documentação'
+        const message = e.response?.data?.message || 'Erro não mapeado'
+        const details = e.response?.data?.details
+
+        errorMessage.value = details
+            ? `${message}\n${details}`
+            : message
     } finally {
         isGenerating.value = false
     }
@@ -147,6 +156,9 @@ async function generateDocumentation() {
 async function generateChangelog() {
     if (!compareData.value?.commits?.length) return
 
+    errorMessage.value = ''
+    documentation.value = ''
+    changelog.value = ''
     isGeneratingChangelog.value = true
 
     try {
@@ -158,8 +170,12 @@ async function generateChangelog() {
         changelog.value = response.data.changelog
 
     } catch (e) {
-        changelogError.value =
-            e.response?.data?.message || 'Erro ao gerar changelog'
+        const message = e.response?.data?.message || 'Erro não mapeado'
+        const details = e.response?.data?.details
+
+        errorMessage.value = details
+            ? `${message}\n${details}`
+            : message
     } finally {
         isGeneratingChangelog.value = false
     }
@@ -185,7 +201,7 @@ async function generateChangelog() {
                 <v-list>
                     <v-list-item disabled>
                         <v-list-item-title>
-                            Empresa: {{ primaryOwner }}
+                            Owner: {{ primaryOwner }}
                         </v-list-item-title>
                     </v-list-item>
 
@@ -199,7 +215,7 @@ async function generateChangelog() {
 
                     <v-list-item disabled>
                         <v-list-item-title>
-                            Nome: {{ props.user?.name || '-' }}
+                            User: {{ props.user?.name || '-' }}
                         </v-list-item-title>
                     </v-list-item>
 
@@ -279,7 +295,20 @@ async function generateChangelog() {
                 <v-row class="mt-6" v-if="compareData">
                     <v-col cols="12">
                         <v-alert type="success" variant="tonal">
-                            {{ compareData.total_commits }} commits encontrados.
+                            <div>
+                                Branch: <strong>{{ compareData.branch }}</strong>
+                            </div>
+                            <div>
+                                {{ compareData.total_commits }} commits encontrados.
+                            </div>
+                        </v-alert>
+                    </v-col>
+                </v-row>
+
+                <v-row v-if="errorMessage" class="mt-6">
+                    <v-col cols="12">
+                        <v-alert type="error" variant="tonal" style="white-space: pre-wrap;">
+                            {{ errorMessage }}
                         </v-alert>
                     </v-col>
                 </v-row>
@@ -290,6 +319,7 @@ async function generateChangelog() {
                             color="primary"
                             block
                             :loading="isGenerating"
+                            :disabled="isGeneratingChangelog"
                             @click="generateDocumentation"
                         >
                             GERAR DOCUMENTAÇÃO
@@ -301,6 +331,7 @@ async function generateChangelog() {
                             color="primary"
                             block
                             :loading="isGeneratingChangelog"
+                            :disabled="isGenerating"
                             @click="generateChangelog"
                         >
                             GERAR CHANGELOG
@@ -312,9 +343,9 @@ async function generateChangelog() {
                     <v-col cols="12">
                         <v-card>
                             <v-card-title>
-                                Documentação Sintetizada via IA
+                                Documentação Sintetizada via IA Cohere
                             </v-card-title>
-                            <v-card-text>
+                            <v-card-text style="white-space: pre-line;">
                                 {{ documentation }}
                             </v-card-text>
                         </v-card>
@@ -327,7 +358,7 @@ async function generateChangelog() {
                             <v-card-title>
                                 Changelog via IA
                             </v-card-title>
-                            <v-card-text>
+                            <v-card-text style="white-space: pre-line;">
                                 {{ changelog }}
                             </v-card-text>
                         </v-card>

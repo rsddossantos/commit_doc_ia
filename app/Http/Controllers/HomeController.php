@@ -198,9 +198,9 @@ class HomeController extends Controller
             })
             ->sortByDesc('date')
             ->map(function ($commit) {
-                return $commit['message']; // transforma em string aqui
+                return $commit['message'];
             })
-            ->take(300)
+            ->take(1000) // Iremos pegar os 1000 últimos commits, senão irá demorar muito a geração mesmo com chunk
             ->values()
             ->all();
 
@@ -236,6 +236,8 @@ class HomeController extends Controller
 
             try {
                 $response = Http::withOptions($options)
+                    ->timeout(240)
+                    ->connectTimeout(30)
                     ->withHeaders([
                         'Authorization' => "Bearer {$apiKey}",
                         'Accept' => 'application/json',
@@ -272,14 +274,6 @@ class HomeController extends Controller
             $partialSummaries[] = $text;
         }
 
-        // Se só tiver um chunk, retorna direto
-        if (count($partialSummaries) === 1) {
-            return [
-                'failed' => false,
-                'text' => $partialSummaries[0],
-            ];
-        }
-
         // Consolidação final
         $finalPrompt = view('prompts.general_doc')->render();
 
@@ -296,6 +290,8 @@ class HomeController extends Controller
 
         try {
             $finalResponse = Http::withOptions($options)
+                ->timeout(240)
+                ->connectTimeout(30)
                 ->withHeaders([
                     'Authorization' => "Bearer {$apiKey}",
                     'Accept' => 'application/json',
@@ -481,6 +477,8 @@ class HomeController extends Controller
 
         try {
             $response = Http::withOptions($options)
+                ->timeout(240)
+                ->connectTimeout(30)
                 ->withHeaders([
                     'Authorization' => "Bearer {$apiKey}",
                     'Accept' => 'application/json',

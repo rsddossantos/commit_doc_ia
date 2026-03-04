@@ -11,4 +11,4 @@ Sua tarefa:
 - Não repetir textos literalmente.
 - Produzir um resumo claro, objetivo e técnico.
 
-Responda apenas com o resumo.
+Responda apenas com o resumo das alterações.
