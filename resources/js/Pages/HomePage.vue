@@ -298,10 +298,7 @@ function getFilteredBranches(repo) {
 
                             <div v-else>
                                 <div>
-                                    Base: {{ compareData.base }}
-                                </div>
-                                <div>
-                                    Feature: {{ compareData.feature }}
+                                    Branch: {{ compareData.branch }}
                                 </div>
                                 <div>
                                     Commits: {{ compareData.total_commits }}

@@ -339,59 +339,79 @@ class HomeController extends Controller
             $options['verify'] = false;
         }
 
-        $owner = $request->input('owner');
-        $repo = $request->input('repo');
-        $feature = $request->input('branch');
+        $owner = $request->owner;
+        $repo = $request->repo;
+        $branch = $request->branch;
 
-        // Buscar default branch
-        $repoResponse = Http::withOptions($options)
-            ->withToken($token)
-            ->get("https://api.github.com/repos/{$owner}/{$repo}");
+        // 1) Buscar TODOS os commits
 
-        if ($repoResponse->failed()) {
-            return response()->json([
-                'message' => 'Falha ao buscar repositório.',
-                'details' => $repoResponse->json(),
-            ], $repoResponse->status());
+        $allCommits = [];
+        $page = 1;
+        $perPage = 100;
+
+        while (true) {
+
+            $response = Http::withOptions($options)
+                ->withToken($token)
+                ->get("https://api.github.com/repos/{$owner}/{$repo}/commits", [
+                    'sha' => $branch,
+                    'per_page' => $perPage,
+                    'page' => $page,
+                ]);
+
+            if ($response->failed()) {
+                return response()->json([
+                    'message' => 'Falha ao buscar commits.',
+                    'details' => $response->json(),
+                ], 422);
+            }
+
+            $batch = $response->json();
+
+            if (empty($batch)) {
+                break;
+            }
+
+            $allCommits = array_merge($allCommits, $batch);
+
+            if (count($batch) < $perPage) {
+                break;
+            }
+
+            $page++;
         }
 
-        $base = $repoResponse->json('default_branch');
+        // 2) Buscar detalhes commit por commit
 
-        if (!$base) {
-            return response()->json([
-                'message' => 'Branch base não encontrada.',
-            ], 422);
-        }
+        $commits = [];
+        $files = [];
 
-        // Compare base...feature
-        $compareResponse = Http::withOptions($options)
-            ->withToken($token)
-            ->get("https://api.github.com/repos/{$owner}/{$repo}/compare/{$base}...{$feature}");
+        foreach ($allCommits as $commit) {
 
-        if ($compareResponse->failed()) {
-            return response()->json([
-                'message' => 'Falha ao comparar branches.',
-                'details' => $compareResponse->json(),
-            ], $compareResponse->status());
-        }
+            $sha = $commit['sha'] ?? null;
+            if (!$sha) {
+                continue;
+            }
 
-        $compareData = $compareResponse->json();
+            $detailResponse = Http::withOptions($options)
+                ->withToken($token)
+                ->get("https://api.github.com/repos/{$owner}/{$repo}/commits/{$sha}");
 
-        $commits = collect($compareData['commits'] ?? [])
-            ->map(function ($commit) {
-                return [
-                    'sha' => $commit['sha'] ?? null,
-                    'message' => $commit['commit']['message'] ?? null,
-                    'date' => $commit['commit']['author']['date'] ?? null,
-                    'author' => $commit['commit']['author']['name'] ?? null,
-                ];
-            })
-            ->values()
-            ->all();
+            if ($detailResponse->failed()) {
+                continue;
+            }
 
-        $files = collect($compareData['files'] ?? [])
-            ->map(function ($file) {
-                return [
+            $detail = $detailResponse->json();
+
+            $commits[] = [
+                'sha' => $sha,
+                'message' => $detail['commit']['message'] ?? null,
+                'date' => $detail['commit']['author']['date'] ?? null,
+                'author' => $detail['commit']['author']['name'] ?? null,
+            ];
+
+            foreach ($detail['files'] ?? [] as $file) {
+                $files[] = [
                     'filename' => $file['filename'] ?? null,
                     'status' => $file['status'] ?? null,
                     'additions' => $file['additions'] ?? 0,
@@ -399,13 +419,11 @@ class HomeController extends Controller
                     'changes' => $file['changes'] ?? 0,
                     'patch' => $file['patch'] ?? null,
                 ];
-            })
-            ->values()
-            ->all();
+            }
+        }
 
         return response()->json([
-            'base' => $base,
-            'feature' => $feature,
+            'branch' => $branch,
             'total_commits' => count($commits),
             'total_files' => count($files),
             'commits' => $commits,
@@ -418,10 +436,7 @@ class HomeController extends Controller
         set_time_limit(300);
 
         $request->validate([
-            'owner' => 'required|string',
-            'repo' => 'required|string',
             'branch' => 'required|string',
-            'base' => 'required|string',
             'commits' => 'required|array',
             'files' => 'required|array',
         ]);
@@ -446,9 +461,6 @@ class HomeController extends Controller
         $initialPrompt = view('prompts.changelog_doc')->render();
 
         $payloadData = [
-            'owner' => $request->input('owner'),
-            'repo' => $request->input('repo'),
-            'base' => $request->input('base'),
             'feature' => $request->input('branch'),
             'commits' => $request->input('commits'),
             'files' => $request->input('files'),
