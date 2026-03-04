@@ -55,33 +55,13 @@ class HomeController extends Controller
             $page++;
         }
 
-        $repos = collect($allRepos)->map(function ($repo) use ($token, $options) {
-            $branchesResponse = Http::withOptions($options)
-                ->withToken($token)
-                ->get(str_replace('{/branch}', '', $repo['branches_url']));
-            $branches = [];
-            if (!$branchesResponse->failed()) {
-                $defaultBranch = $repo['default_branch'] ?? null;
-                $branchesCollection = collect($branchesResponse->json())
-                    ->map(function ($branch) use ($defaultBranch) {
-                        $name = $branch['name'] ?? null;
-                        return [
-                            'name' => $name,
-                            'is_primary' => $name && $defaultBranch && $name === $defaultBranch,
-                        ];
-                    })
-                    ->filter(fn ($branch) => $branch['name']);
-
-                $primary = $branchesCollection->filter(fn ($branch) => $branch['is_primary']);
-                $others = $branchesCollection->reject(fn ($branch) => $branch['is_primary']);
-                $branches = $primary->concat($others)->values();
-            }
+        $repos = collect($allRepos)->map(function ($repo) {
             return [
                 'owner' => $repo['owner']['login'] ?? null,
                 'name' => $repo['name'],
-                'branches' => $branches,
+                'default_branch' => $repo['default_branch'] ?? null,
             ];
-        });
+        })->values();
 
         return Inertia::render('HomePage', [
             'repos' => $repos,
@@ -95,13 +75,14 @@ class HomeController extends Controller
     public function processMain(Request $request)
     {
         set_time_limit(300);
+
         $request->validate([
             'owner' => 'required|string',
             'repo' => 'required|string',
-            'branch' => 'required|string',
         ]);
 
         $token = $request->session()->get('github_token');
+
         if (!$token) {
             return response()->json(['message' => 'Unauthorized'], 401);
         }
@@ -113,19 +94,40 @@ class HomeController extends Controller
 
         $owner = $request->input('owner');
         $repo = $request->input('repo');
-        $branch = $request->input('branch');
 
-        $mainCommits = $this->fetchCommits($options, $token, $owner, $repo, $branch);
-        if ($mainCommits['failed']) {
+        // Buscar repositório para pegar default_branch
+        $repoResponse = Http::withOptions($options)
+            ->withToken($token)
+            ->get("https://api.github.com/repos/{$owner}/{$repo}");
+
+        if ($repoResponse->failed()) {
             return response()->json([
-                'message' => 'Falha ao buscar commits no GitHub.',
-                'details' => $mainCommits['details'],
-            ], $mainCommits['status']);
+                'message' => 'Falha ao buscar repositório.',
+            ], $repoResponse->status());
         }
 
+        $branch = $repoResponse->json('default_branch');
+
+        if (!$branch) {
+            return response()->json([
+                'message' => 'Branch principal não encontrada.',
+            ], 422);
+        }
+
+        $commitsResponse = $this->fetchCommits($options, $token, $owner, $repo, $branch);
+
+        if ($commitsResponse['failed']) {
+            return response()->json([
+                'message' => 'Falha ao buscar commits.',
+            ], $commitsResponse['status']);
+        }
+
+        $commits = $commitsResponse['items'];
+
         return response()->json([
-            'total' => count($mainCommits['items']),
-            'commits' => $mainCommits['items'],
+            'branch' => $branch,
+            'total_commits' => count($commits),
+            'commits' => $commits,
         ]);
     }
 
@@ -133,8 +135,6 @@ class HomeController extends Controller
     {
         set_time_limit(300);
         $request->validate([
-            'owner' => 'required|string',
-            'repo' => 'required|string',
             'branch' => 'required|string',
             'commits' => 'required|array|min:1',
         ]);
@@ -154,15 +154,8 @@ class HomeController extends Controller
             return response()->json(['message' => 'Nenhum commit encontrado para processar.'], 422);
         }
 
-        $payload = [
-            'owner' => $request->input('owner'),
-            'repo' => $request->input('repo'),
-            'branch' => $request->input('branch'),
-            'total' => count($commits),
-            'commits' => $commits,
-        ];
+        $documentation = $this->sendDocToIA($options, $commits);
 
-        $documentation = $this->sendCommitsToIA($options, $payload);
         if ($documentation['failed']) {
             return response()->json([
                 'message' => 'Falha ao gerar documentação.',
@@ -175,9 +168,10 @@ class HomeController extends Controller
         ]);
     }
 
-    private function sendCommitsToIA(array $options, array $commitPayload): array
+    private function sendDocToIA(array $options, array $commits): array
     {
         $apiKey = config('services.cohere.key');
+
         if (!$apiKey) {
             return [
                 'failed' => true,
@@ -186,28 +180,301 @@ class HomeController extends Controller
             ];
         }
 
-        $initialPrompt = view('prompts.commit_doc')->render();
-        $messages = collect($commitPayload['commits'] ?? [])
-            ->pluck('message')
-            ->filter(fn ($message) => is_string($message) && trim($message) !== '')
+        $filtered = collect($commits)
+            ->filter(function ($commit) {
+                $message = $commit['message'] ?? null;
+
+                if (!is_string($message)) return false;
+
+                $message = mb_substr(trim($message), 0, 300);
+
+                if ($message === '') return false;
+
+                if (preg_match('/^Merge\s/i', $message)) return false;
+
+                if (empty($commit['date'])) return false;
+
+                return true;
+            })
+            ->sortByDesc('date')
+            ->map(function ($commit) {
+                return $commit['message']; // transforma em string aqui
+            })
+            ->take(300)
             ->values()
             ->all();
 
-        $commitData = [
-            'owner' => $commitPayload['owner'] ?? null,
-            'repo' => $commitPayload['repo'] ?? null,
-            'branch' => $commitPayload['branch'] ?? null,
-            'total' => $commitPayload['total'] ?? count($messages),
-            'commit_messages' => $messages,
-        ];
+        if (empty($filtered)) {
+            return [
+                'failed' => true,
+                'status' => 422,
+                'details' => 'Nenhum commit válido.',
+            ];
+        }
 
-        $payload = [
+        $chunks = array_chunk($filtered, 100);
+        $partialSummaries = [];
+
+        foreach ($chunks as $chunk) {
+
+            \Log::info('Chunk enviado para IA', [
+                'chunk_size' => count($chunk)
+            ]);
+
+            $prompt = view('prompts.partial_doc')->render();
+
+            $payload = [
+                'model' => config('services.cohere.model', 'command-a-03-2025'),
+                'messages' => [
+                    ['role' => 'system', 'content' => $prompt],
+                    [
+                        'role' => 'user',
+                        'content' => implode("\n", $chunk),
+                    ],
+                ],
+            ];
+
+            try {
+                $response = Http::withOptions($options)
+                    ->withHeaders([
+                        'Authorization' => "Bearer {$apiKey}",
+                        'Accept' => 'application/json',
+                        'Content-Type' => 'application/json',
+                    ])
+                    ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $payload);
+            } catch (\Exception $e) {
+                return [
+                    'failed' => true,
+                    'status' => 500,
+                    'details' => $e->getMessage(),
+                ];
+            }
+
+            if (!$response->ok()) {
+                return [
+                    'failed' => true,
+                    'status' => $response->status(),
+                    'details' => $response->body(),
+                ];
+            }
+
+            $body = $response->json();
+            $text = $body['message']['content'][0]['text'] ?? null;
+
+            if (!$text) {
+                return [
+                    'failed' => true,
+                    'status' => 502,
+                    'details' => $body,
+                ];
+            }
+
+            $partialSummaries[] = $text;
+        }
+
+        // Se só tiver um chunk, retorna direto
+        if (count($partialSummaries) === 1) {
+            return [
+                'failed' => false,
+                'text' => $partialSummaries[0],
+            ];
+        }
+
+        // Consolidação final
+        $finalPrompt = view('prompts.general_doc')->render();
+
+        $finalPayload = [
             'model' => config('services.cohere.model', 'command-a-03-2025'),
             'messages' => [
-                ['role' => 'system', 'content' => $initialPrompt],
+                ['role' => 'system', 'content' => $finalPrompt],
                 [
                     'role' => 'user',
-                    'content' => "Dados do repositório em JSON (apenas mensagens de commits):\n" . json_encode($commitData['commit_messages']),
+                    'content' => implode("\n\n", $partialSummaries),
+                ],
+            ],
+        ];
+
+        try {
+            $finalResponse = Http::withOptions($options)
+                ->withHeaders([
+                    'Authorization' => "Bearer {$apiKey}",
+                    'Accept' => 'application/json',
+                    'Content-Type' => 'application/json',
+                ])
+                ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $finalPayload);
+        } catch (\Exception $e) {
+            return [
+                'failed' => true,
+                'status' => 500,
+                'details' => $e->getMessage(),
+            ];
+        }
+
+        if (!$finalResponse->ok()) {
+            return [
+                'failed' => true,
+                'status' => $finalResponse->status(),
+                'details' => $finalResponse->body(),
+            ];
+        }
+
+        $body = $finalResponse->json();
+        $text = $body['message']['content'][0]['text'] ?? null;
+
+        if (!$text) {
+            return [
+                'failed' => true,
+                'status' => 502,
+                'details' => $body,
+            ];
+        }
+
+        return [
+            'failed' => false,
+            'text' => $text,
+        ];
+    }
+
+    private function fetchCommits(array $options, string $token, string $owner, string $repo, string $branch): array
+    {
+        $page = 1;
+        $perPage = 100;
+        $items = [];
+
+        while (true) {
+            $response = Http::withOptions($options)
+                ->withToken($token)
+                ->get("https://api.github.com/repos/{$owner}/{$repo}/commits", [
+                    'sha' => $branch,
+                    'per_page' => $perPage,
+                    'page' => $page,
+                ]);
+
+            if ($response->failed()) {
+                return [
+                    'failed' => true,
+                    'status' => $response->status(),
+                    'details' => $response->json(),
+                ];
+            }
+
+            $batch = $response->json();
+
+            if (empty($batch)) {
+                break;
+            }
+
+            foreach ($batch as $commit) {
+                $message = $commit['commit']['message'] ?? null;
+                $date = $commit['commit']['author']['date'] ?? null;
+
+                if (!$message || !$date) continue;
+
+                $firstLine = trim(strtok($message ?? '', "\n") ?: '');
+
+                if (!$firstLine) continue;
+
+                if (preg_match('/^Merge\s/i', $firstLine)) continue;
+
+                $items[] = [
+                    'message' => mb_substr($firstLine, 0, 300),
+                    'date' => $date,
+                ];
+            }
+
+            $page++;
+        }
+
+        $items = array_reverse($items);
+
+        return [
+            'failed' => false,
+            'items' => $items,
+        ];
+    }
+
+    public function generateChangelog(Request $request)
+    {
+        set_time_limit(300);
+
+        $request->validate([
+            'branch' => 'required|string',
+            'commits' => 'required|array|min:1',
+        ]);
+
+        $options = [];
+        if (config('app.env') === 'homolog') {
+            $options['verify'] = false;
+        }
+
+        $commits = collect($request->input('commits', []))
+            ->filter(function ($commit) {
+                $message = $commit['message'] ?? null;
+
+                if (!is_string($message)) return false;
+
+                $message = trim($message);
+
+                if ($message === '') return false;
+
+                if (preg_match('/^Merge\s/i', $message)) return false;
+
+                return !empty($commit['date']);
+            })
+            ->sortByDesc('date')
+            ->groupBy(function ($commit) {
+                return substr($commit['date'], 0, 10);
+            })
+            ->map(function ($group, $date) {
+                return [
+                    'date' => $date,
+                    'commits' => $group->pluck('message')->values()->all()
+                ];
+            })
+            ->take(200)
+            ->values()
+            ->all();
+
+        $payload = [
+            'branch' => $request->input('branch'),
+            'commits_by_date' => $commits,
+        ];
+
+        $result = $this->sendChangeLogToIA($options, $payload);
+
+        if ($result['failed']) {
+            return response()->json([
+                'message' => 'Falha ao gerar changelog.',
+                'details' => $result['details'] ?? null,
+            ], $result['status']);
+        }
+
+        return response()->json([
+            'changelog' => $result['text'],
+        ]);
+    }
+
+    private function sendChangeLogToIA(array $options, array $payload): array
+    {
+        $apiKey = config('services.cohere.key');
+
+        if (!$apiKey) {
+            return [
+                'failed' => true,
+                'status' => 500,
+                'details' => 'COHERE_API_KEY não configurada.',
+            ];
+        }
+
+        $prompt = view('prompts.changelog')->render();
+
+        $requestPayload = [
+            'model' => config('services.cohere.model', 'command-a-03-2025'),
+            'messages' => [
+                ['role' => 'system', 'content' => $prompt],
+                [
+                    'role' => 'user',
+                    'content' => json_encode($payload),
                 ],
             ],
         ];
@@ -219,7 +486,7 @@ class HomeController extends Controller
                     'Accept' => 'application/json',
                     'Content-Type' => 'application/json',
                 ])
-                ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $payload);
+                ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $requestPayload);
         } catch (\Exception $e) {
             return [
                 'failed' => true,
@@ -251,267 +518,6 @@ class HomeController extends Controller
             'failed' => false,
             'text' => $text,
         ];
-    }
-
-    private function fetchCommits(array $options, string $token, string $owner, string $repo, string $branch): array
-    {
-        $page = 1;
-        $perPage = 100;
-        $items = [];
-        $raw = [];
-
-        while (true) {
-            $response = Http::withOptions($options)
-                ->withToken($token)
-                ->get("https://api.github.com/repos/{$owner}/{$repo}/commits", [
-                    'sha' => $branch,
-                    'per_page' => $perPage,
-                    'page' => $page,
-                ]);
-
-            if ($response->failed()) {
-                return [
-                    'failed' => true,
-                    'status' => $response->status(),
-                    'details' => $response->json(),
-                ];
-            }
-
-            $batch = $response->json();
-            if (empty($batch)) {
-                break;
-            }
-
-            foreach ($batch as $commit) {
-                $raw[] = $commit;
-                $message = $commit['commit']['message'] ?? null;
-                $author = $commit['commit']['author']['name'] ?? null;
-                $firstLine = trim(strtok($message ?? '', "\n") ?: '');
-
-                if (!$firstLine) {
-                    continue;
-                }
-                if (!$author) {
-                    continue;
-                }
-                if (preg_match('/^Merge\s/i', $firstLine)) {
-                    continue;
-                }
-
-                $items[] = [
-                    'sha' => $commit['sha'] ?? null,
-                    'message' => $message,
-                    'date' => $commit['commit']['author']['date'] ?? null,
-                    'author' => $author,
-                ];
-            }
-
-            $page++;
-        }
-
-        $items = array_reverse($items);
-        $raw = array_reverse($raw);
-
-        return [
-            'failed' => false,
-            'items' => $items,
-            'raw' => $raw,
-        ];
-    }
-
-    public function processFeature(Request $request)
-    {
-        set_time_limit(300);
-
-        $request->validate([
-            'owner' => 'required|string',
-            'repo' => 'required|string',
-            'branch' => 'required|string',
-        ]);
-
-        $token = $request->session()->get('github_token');
-        if (!$token) {
-            return response()->json(['message' => 'Unauthorized'], 401);
-        }
-
-        $options = [];
-        if (config('app.env') === 'homolog') {
-            $options['verify'] = false;
-        }
-
-        $owner = $request->owner;
-        $repo = $request->repo;
-        $branch = $request->branch;
-
-        // 1) Buscar TODOS os commits
-
-        $allCommits = [];
-        $page = 1;
-        $perPage = 100;
-
-        while (true) {
-
-            $response = Http::withOptions($options)
-                ->withToken($token)
-                ->get("https://api.github.com/repos/{$owner}/{$repo}/commits", [
-                    'sha' => $branch,
-                    'per_page' => $perPage,
-                    'page' => $page,
-                ]);
-
-            if ($response->failed()) {
-                return response()->json([
-                    'message' => 'Falha ao buscar commits.',
-                    'details' => $response->json(),
-                ], 422);
-            }
-
-            $batch = $response->json();
-
-            if (empty($batch)) {
-                break;
-            }
-
-            $allCommits = array_merge($allCommits, $batch);
-
-            if (count($batch) < $perPage) {
-                break;
-            }
-
-            $page++;
-        }
-
-        // 2) Buscar detalhes commit por commit
-
-        $commits = [];
-        $files = [];
-
-        foreach ($allCommits as $commit) {
-
-            $sha = $commit['sha'] ?? null;
-            if (!$sha) {
-                continue;
-            }
-
-            $detailResponse = Http::withOptions($options)
-                ->withToken($token)
-                ->get("https://api.github.com/repos/{$owner}/{$repo}/commits/{$sha}");
-
-            if ($detailResponse->failed()) {
-                continue;
-            }
-
-            $detail = $detailResponse->json();
-
-            $commits[] = [
-                'sha' => $sha,
-                'message' => $detail['commit']['message'] ?? null,
-                'date' => $detail['commit']['author']['date'] ?? null,
-                'author' => $detail['commit']['author']['name'] ?? null,
-            ];
-
-            foreach ($detail['files'] ?? [] as $file) {
-                $files[] = [
-                    'filename' => $file['filename'] ?? null,
-                    'status' => $file['status'] ?? null,
-                    'additions' => $file['additions'] ?? 0,
-                    'deletions' => $file['deletions'] ?? 0,
-                    'changes' => $file['changes'] ?? 0,
-                    'patch' => $file['patch'] ?? null,
-                ];
-            }
-        }
-
-        return response()->json([
-            'branch' => $branch,
-            'total_commits' => count($commits),
-            'total_files' => count($files),
-            'commits' => $commits,
-            'files' => $files,
-        ]);
-    }
-
-    public function generateChangelog(Request $request)
-    {
-        set_time_limit(300);
-
-        $request->validate([
-            'branch' => 'required|string',
-            'commits' => 'required|array',
-            'files' => 'required|array',
-        ]);
-
-        $token = $request->session()->get('github_token');
-        if (!$token) {
-            return response()->json(['message' => 'Unauthorized'], 401);
-        }
-
-        $options = [];
-        if (config('app.env') === 'homolog') {
-            $options['verify'] = false;
-        }
-
-        $apiKey = config('services.cohere.key');
-        if (!$apiKey) {
-            return response()->json([
-                'message' => 'COHERE_API_KEY não configurada.',
-            ], 500);
-        }
-
-        $initialPrompt = view('prompts.changelog_doc')->render();
-
-        $payloadData = [
-            'feature' => $request->input('branch'),
-            'commits' => $request->input('commits'),
-            'files' => $request->input('files'),
-        ];
-
-        $payload = [
-            'model' => config('services.cohere.model', 'command-a-03-2025'),
-            'messages' => [
-                ['role' => 'system', 'content' => $initialPrompt],
-                [
-                    'role' => 'user',
-                    'content' => "Dados da comparação em JSON:\n" . json_encode($payloadData),
-                ],
-            ],
-        ];
-
-        try {
-            $response = Http::withOptions($options)
-                ->withHeaders([
-                    'Authorization' => "Bearer {$apiKey}",
-                    'Accept' => 'application/json',
-                    'Content-Type' => 'application/json',
-                ])
-                ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $payload);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Erro ao conectar com IA.',
-                'details' => $e->getMessage(),
-            ], 500);
-        }
-
-        if (!$response->ok()) {
-            return response()->json([
-                'message' => 'Falha ao gerar changelog.',
-                'details' => $response->body(),
-            ], $response->status());
-        }
-
-        $body = $response->json();
-        $text = $body['message']['content'][0]['text'] ?? null;
-
-        if (!$text) {
-            return response()->json([
-                'message' => 'Resposta inválida da IA.',
-                'details' => $body,
-            ], 502);
-        }
-
-        return response()->json([
-            'changelog' => $text,
-        ]);
     }
 }
 

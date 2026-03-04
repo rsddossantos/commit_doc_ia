@@ -2,11 +2,9 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
 import axios from 'axios'
-import SearchInput from "@/Components/SearchInput.vue";
+import SearchInput from "@/Components/SearchInput.vue"
 
-const selectedBranch = ref(null)
-const branchSearch = reactive({})
-const activePanel = ref(null)
+const selectedRepo = ref(null)
 const search = ref('')
 const isProcessing = ref(false)
 const isGenerating = ref(false)
@@ -16,7 +14,6 @@ const changelogError = ref('')
 const documentation = ref('')
 const changelog = ref('')
 const compareData = ref(null)
-const alertType = ref('success')
 
 const props = defineProps({
     repos: {
@@ -31,10 +28,6 @@ const props = defineProps({
 
 const repos = reactive(props.repos || [])
 
-const displayName = computed(() =>
-    props.user?.name || props.user?.login || 'Usuário'
-)
-
 const primaryOwner = computed(() => {
     const counts = new Map()
     for (const repo of repos) {
@@ -45,6 +38,10 @@ const primaryOwner = computed(() => {
     if (counts.size === 0) return '-'
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0]
 })
+
+const displayName = computed(() =>
+    props.user?.name || props.user?.login || 'Usuário'
+)
 
 const filteredRepos = computed(() => {
     if (!search.value) return repos
@@ -67,12 +64,19 @@ const pagedRepos = computed(() => {
 
 watch(search, () => currentPage.value = 1)
 
-function selectBranch(owner, repoName, branchName, isPrimary) {
-    selectedBranch.value = {
-        owner,
-        repo: repoName,
-        branch: branchName,
-        isPrimary: !!isPrimary
+const isDocDisabled = computed(() =>
+    isGeneratingChangelog.value
+)
+
+const isChangelogDisabled = computed(() =>
+    isGenerating.value
+)
+
+function toggleRepo(repo) {
+    if (selectedRepo.value?.name === repo.name) {
+        selectedRepo.value = null
+    } else {
+        selectedRepo.value = repo
     }
     resetState()
 }
@@ -83,7 +87,6 @@ function resetState() {
     documentation.value = ''
     changelog.value = ''
     compareData.value = null
-    alertType.value = 'success'
 }
 
 function logout() {
@@ -98,45 +101,37 @@ function prevPage() {
     if (currentPage.value > 1) currentPage.value--
 }
 
-async function processBranch() {
-    if (!selectedBranch.value) return
+async function processRepo() {
+    if (!selectedRepo.value) return
 
     resetState()
     isProcessing.value = true
 
     try {
-        const endpoint = selectedBranch.value.isPrimary
-            ? '/process-main'
-            : '/process-feature'
-
-        const response = await axios.post(endpoint, {
-            owner: selectedBranch.value.owner,
-            repo: selectedBranch.value.repo,
-            branch: selectedBranch.value.branch
+        const response = await axios.post('/process-main', {
+            owner: selectedRepo.value.owner,
+            repo: selectedRepo.value.name,
         })
 
         compareData.value = response.data
 
     } catch (e) {
         errorMessage.value =
-            e.response?.data?.message || 'Não obteve resposta do servidor'
+            e.response?.data?.message || 'Erro ao processar'
     } finally {
         isProcessing.value = false
     }
 }
 
 async function generateDocumentation() {
-    if (!compareData.value) return
+    if (!compareData.value?.commits?.length) return
 
     isGenerating.value = true
-    activePanel.value = null
 
     try {
         const response = await axios.post('/generate-documentation', {
-            ...compareData.value,
-            owner: selectedBranch.value.owner,
-            repo: selectedBranch.value.repo,
-            branch: selectedBranch.value.branch
+            branch: compareData.value.branch,
+            commits: compareData.value.commits
         })
 
         documentation.value = response.data.documentation
@@ -150,25 +145,14 @@ async function generateDocumentation() {
 }
 
 async function generateChangelog() {
-    if (!compareData.value) return
+    if (!compareData.value?.commits?.length) return
 
-    if (!compareData.value.files?.length || !compareData.value.commits?.length) {
-        alertType.value = 'warning'
-        return
-    }
-
-    alertType.value = 'success'
     isGeneratingChangelog.value = true
-    activePanel.value = null
 
     try {
         const response = await axios.post('/generate-changelog', {
-            owner: selectedBranch.value.owner,
-            repo: selectedBranch.value.repo,
-            branch: selectedBranch.value.branch,
-            base: compareData.value.base,
-            commits: compareData.value.commits,
-            files: compareData.value.files
+            branch: compareData.value.branch,
+            commits: compareData.value.commits
         })
 
         changelog.value = response.data.changelog
@@ -180,26 +164,55 @@ async function generateChangelog() {
         isGeneratingChangelog.value = false
     }
 }
-
-function getFilteredBranches(repo) {
-    const term = branchSearch[repo.name]?.toLowerCase()
-    return repo.branches.filter(branch =>
-        !term ||
-        branch.name.toLowerCase().includes(term)
-    )
-}
 </script>
 
 <template>
     <v-app>
-        <v-toolbar color="primary" dark elevation="2" height="64">
+        <v-toolbar color="primary">
             <v-toolbar-title class="font-weight-bold white--text">
                 CommitDoc AI
             </v-toolbar-title>
-            <v-spacer/>
-            <v-btn icon @click="logout">
-                <v-icon>mdi-logout</v-icon>
-            </v-btn>
+
+            <v-spacer />
+
+            <v-menu location="bottom end">
+                <template #activator="{ props }">
+                    <v-btn v-bind="props" icon>
+                        <v-icon>mdi-account</v-icon>
+                    </v-btn>
+                </template>
+
+                <v-list>
+                    <v-list-item disabled>
+                        <v-list-item-title>
+                            Empresa: {{ primaryOwner }}
+                        </v-list-item-title>
+                    </v-list-item>
+
+                    <v-divider />
+
+                    <v-list-item disabled>
+                        <v-list-item-title>
+                            Login: {{ props.user?.login }}
+                        </v-list-item-title>
+                    </v-list-item>
+
+                    <v-list-item disabled>
+                        <v-list-item-title>
+                            Nome: {{ props.user?.name || '-' }}
+                        </v-list-item-title>
+                    </v-list-item>
+
+                    <v-divider />
+
+                    <v-list-item @click="logout">
+                        <v-list-item-title>
+                            <v-icon size="small" class="mr-2">mdi-logout</v-icon>
+                            Sair
+                        </v-list-item-title>
+                    </v-list-item>
+                </v-list>
+            </v-menu>
         </v-toolbar>
 
         <v-main>
@@ -213,113 +226,68 @@ function getFilteredBranches(repo) {
 
                 <v-row dense class="mt-6">
                     <v-col cols="12" md="4"
-                           v-for="(repo, index) in pagedRepos"
+                           v-for="repo in pagedRepos"
                            :key="repo.name"
                     >
-                        <v-expansion-panels v-model="activePanel">
-                            <v-expansion-panel :value="index + (currentPage - 1) * perPage">
-
-                                <v-expansion-panel-title
-                                    class="font-weight-bold"
-                                    :class="{ 'active-hover': selectedBranch?.repo === repo.name }"
-                                >
-                                    {{ repo.name }}
-                                </v-expansion-panel-title>
-
-                                <v-expansion-panel-text>
-
-                                    <SearchInput
-                                        v-model="branchSearch[repo.name]"
-                                        placeholder="Pesquisar branches"
-                                        wrapperClass="mb-4"
-                                        class="mb-2"
-                                    />
-
-                                    <v-list dense class="branch-panel">
-                                        <v-list-item
-                                            v-for="branch in getFilteredBranches(repo)"
-                                            :key="branch.name"
-                                            @click="selectBranch(repo.owner, repo.name, branch.name, branch.is_primary)"
-                                            :class="{'selected-branch': selectedBranch?.repo === repo.name && selectedBranch?.branch === branch.name}"
-                                        >
-                                            <v-list-item-title>
-                                                <span :class="{ 'branch-primary-name': branch.is_primary }">
-                                                {{ branch.name }}
-                                                </span>
-                                            </v-list-item-title>
-                                        </v-list-item>
-                                    </v-list>
-
-                                </v-expansion-panel-text>
-                            </v-expansion-panel>
-                        </v-expansion-panels>
+                        <v-card
+                            class="repo-card"
+                            :class="{ 'selected-repo': selectedRepo?.name === repo.name }"
+                            @click="toggleRepo(repo)"
+                        >
+                            <v-card-title>
+                                {{ repo.name }}
+                            </v-card-title>
+                        </v-card>
                     </v-col>
                 </v-row>
 
-                <v-row class="mt-6 justify-center" align="center" style="gap: 2px;">
-                    <v-btn outlined @click="prevPage" :disabled="currentPage === 1">
-                        Anterior
-                    </v-btn>
-                    <v-btn outlined @click="nextPage" :disabled="currentPage === totalPages">
-                        Próxima
-                    </v-btn>
+                <v-row class="mt-6" align="center">
+                    <v-col cols="6" class="d-flex justify-start">
+                        <v-btn
+                            outlined
+                            @click="prevPage"
+                            :disabled="currentPage === 1"
+                        >
+                            Anterior
+                        </v-btn>
+                    </v-col>
+
+                    <v-col cols="6" class="d-flex justify-end">
+                        <v-btn
+                            outlined
+                            @click="nextPage"
+                            :disabled="currentPage === totalPages"
+                        >
+                            Próxima
+                        </v-btn>
+                    </v-col>
                 </v-row>
 
-                <v-row class="mt-12" v-if="selectedBranch && !compareData">
+                <v-row class="mt-12" v-if="selectedRepo && !compareData">
                     <v-col cols="12">
                         <v-btn
-                            :disabled="isProcessing"
-                            :loading="isProcessing"
                             color="primary"
-                            large
                             block
-                            @click="processBranch"
+                            :loading="isProcessing"
+                            @click="processRepo"
                         >
                             PROCESSAR
                         </v-btn>
                     </v-col>
                 </v-row>
 
-                <v-row class="mt-12" v-if="errorMessage">
+                <v-row class="mt-6" v-if="compareData">
                     <v-col cols="12">
-                        <v-alert type="error" variant="tonal">
-                            Houve um erro no processo: {{ errorMessage }}
+                        <v-alert type="success" variant="tonal">
+                            {{ compareData.total_commits }} commits encontrados.
                         </v-alert>
                     </v-col>
                 </v-row>
 
-                <v-row class="mt-12" v-if="compareData && !errorMessage">
-                    <v-col cols="12">
-                        <v-alert :type="alertType" variant="tonal">
-
-                            <div v-if="selectedBranch?.isPrimary">
-                                {{ compareData.total}} commits carregados da branch principal.
-                            </div>
-
-                            <div v-else>
-                                <div>
-                                    Branch: {{ compareData.branch }}
-                                </div>
-                                <div>
-                                    Commits: {{ compareData.total_commits }}
-                                </div>
-                                <div>
-                                    Arquivos alterados: {{ compareData.total_files }}
-                                </div>
-                            </div>
-
-                        </v-alert>
-                    </v-col>
-                </v-row>
-
-                <v-row
-                    class="mt-6"
-                    v-if="compareData && selectedBranch?.isPrimary && !documentation"
-                >
-                    <v-col cols="12">
+                <v-row class="mt-6" v-if="compareData">
+                    <v-col cols="12" md="6">
                         <v-btn
                             color="primary"
-                            large
                             block
                             :loading="isGenerating"
                             @click="generateDocumentation"
@@ -327,16 +295,10 @@ function getFilteredBranches(repo) {
                             GERAR DOCUMENTAÇÃO
                         </v-btn>
                     </v-col>
-                </v-row>
 
-                <v-row
-                    class="mt-6"
-                    v-if="compareData && !selectedBranch?.isPrimary && !changelog"
-                >
-                    <v-col cols="12">
+                    <v-col cols="12" md="6">
                         <v-btn
                             color="primary"
-                            large
                             block
                             :loading="isGeneratingChangelog"
                             @click="generateChangelog"
@@ -348,11 +310,11 @@ function getFilteredBranches(repo) {
 
                 <v-row class="mt-6" v-if="documentation">
                     <v-col cols="12">
-                        <v-card elevation="2">
-                            <v-card-title class="text-h6">
-                                Documentação Sintetizada via IA Cohere
+                        <v-card>
+                            <v-card-title>
+                                Documentação Sintetizada via IA
                             </v-card-title>
-                            <v-card-text class="documentation-text">
+                            <v-card-text>
                                 {{ documentation }}
                             </v-card-text>
                         </v-card>
@@ -361,22 +323,14 @@ function getFilteredBranches(repo) {
 
                 <v-row class="mt-6" v-if="changelog">
                     <v-col cols="12">
-                        <v-card elevation="2">
-                            <v-card-title class="text-h6">
-                                Changelog via IA Cohere
+                        <v-card>
+                            <v-card-title>
+                                Changelog via IA
                             </v-card-title>
-                            <v-card-text class="documentation-text">
+                            <v-card-text>
                                 {{ changelog }}
                             </v-card-text>
                         </v-card>
-                    </v-col>
-                </v-row>
-
-                <v-row class="mt-6" v-if="changelogError">
-                    <v-col cols="12">
-                        <v-alert type="error" variant="tonal">
-                            {{ changelogError }}
-                        </v-alert>
                     </v-col>
                 </v-row>
 
@@ -390,41 +344,18 @@ function getFilteredBranches(repo) {
     padding: 15px 200px;
 }
 
-.selected-branch {
-    background-color: rgba(0, 123, 255, 0.2) !important;
+.selected-repo {
+    background-color: rgba(0,123,255,0.2) !important;
 }
 
-.v-list-item {
+.repo-card {
     cursor: pointer;
-    transition: background 0.2s;
-}
-
-.v-list-item:hover {
-    background-color: rgba(0, 123, 255, 0.1);
-}
-
-.v-expansion-panel-title:hover,
-.active-hover {
-    background-color: rgba(0, 123, 255, 0.1);
-    transition: background 0.2s;
-}
-
-.branch-panel {
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-.branch-primary-name {
-    font-weight: 700;
-}
-
-.documentation-text {
-    white-space: pre-wrap;
+    transition: 0.2s;
 }
 
 @media (max-width: 960px) {
     .custom-container {
-        padding: 15px 15px;
+        padding: 15px;
     }
 }
 </style>
