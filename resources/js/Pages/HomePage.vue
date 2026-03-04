@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { router } from '@inertiajs/vue3'
 import axios from 'axios'
 import SearchInput from "@/Components/SearchInput.vue"
@@ -38,9 +38,16 @@ const primaryOwner = computed(() => {
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0]
 })
 
-const displayName = computed(() =>
-    props.user?.name || props.user?.login || 'Usuário'
-)
+watch(errorMessage, async (val) => {
+    if (!val) return
+
+    await nextTick()
+
+    window.scrollTo({
+        top: document.body.scrollHeight,
+        behavior: 'smooth'
+    })
+})
 
 const filteredRepos = computed(() => {
     if (!search.value) return repos
@@ -62,14 +69,6 @@ const pagedRepos = computed(() => {
 })
 
 watch(search, () => currentPage.value = 1)
-
-const isDocDisabled = computed(() =>
-    isGeneratingChangelog.value
-)
-
-const isChangelogDisabled = computed(() =>
-    isGenerating.value
-)
 
 function toggleRepo(repo) {
     if (selectedRepo.value?.name === repo.name) {
@@ -280,9 +279,10 @@ async function generateChangelog() {
                 </v-row>
 
                 <v-row class="mt-12" v-if="selectedRepo && !compareData">
-                    <v-col cols="12">
+                    <v-col cols="12" class="d-flex justify-center">
                         <v-btn
                             color="primary"
+                            size="large"
                             block
                             :loading="isProcessing"
                             @click="processRepo"
@@ -294,21 +294,13 @@ async function generateChangelog() {
 
                 <v-row class="mt-6" v-if="compareData">
                     <v-col cols="12">
-                        <v-alert type="success" variant="tonal">
+                        <v-alert type="info" variant="tonal">
                             <div>
                                 Branch: <strong>{{ compareData.branch }}</strong>
                             </div>
                             <div>
                                 {{ compareData.total_commits }} commits encontrados.
                             </div>
-                        </v-alert>
-                    </v-col>
-                </v-row>
-
-                <v-row v-if="errorMessage" class="mt-6">
-                    <v-col cols="12">
-                        <v-alert type="error" variant="tonal" style="white-space: pre-wrap;">
-                            {{ errorMessage }}
                         </v-alert>
                     </v-col>
                 </v-row>
@@ -336,6 +328,22 @@ async function generateChangelog() {
                         >
                             GERAR CHANGELOG
                         </v-btn>
+                    </v-col>
+                </v-row>
+
+                <v-progress-linear
+                    v-if="isGenerating || isGeneratingChangelog"
+                    indeterminate
+                    color="primary"
+                    height="10"
+                    class="mt-8 mb-6"
+                />
+
+                <v-row v-if="errorMessage" class="mt-6">
+                    <v-col cols="12">
+                        <v-alert type="error" variant="tonal" style="white-space: pre-wrap;">
+                            {{ errorMessage }}
+                        </v-alert>
                     </v-col>
                 </v-row>
 
@@ -372,7 +380,7 @@ async function generateChangelog() {
 
 <style scoped>
 .custom-container {
-    padding: 15px 200px;
+    padding: 0 200px 70px 200px;
 }
 
 .selected-repo {
