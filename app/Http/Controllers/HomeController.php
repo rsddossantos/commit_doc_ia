@@ -363,6 +363,8 @@ class HomeController extends Controller
             foreach ($batch as $commit) {
                 $message = $commit['commit']['message'] ?? null;
                 $date = $commit['commit']['author']['date'] ?? null;
+                $sha = $commit['sha'] ?? null;
+                $parents = collect($commit['parents'] ?? [])->pluck('sha')->values()->all();
 
                 if (!$message || !$date) continue;
 
@@ -373,6 +375,8 @@ class HomeController extends Controller
                 if (preg_match('/^Merge\s/i', $firstLine)) continue;
 
                 $items[] = [
+                    'sha' => $sha,
+                    'parents' => $parents,
                     'message' => mb_substr($firstLine, 0, 300),
                     'date' => $date,
                 ];
@@ -391,7 +395,7 @@ class HomeController extends Controller
 
     public function generateChangelog(Request $request)
     {
-        set_time_limit(300);
+        set_time_limit(600);
 
         $request->validate([
             'branch' => 'required|string',
@@ -405,38 +409,24 @@ class HomeController extends Controller
 
         $commits = collect($request->input('commits', []))
             ->filter(function ($commit) {
+
                 $message = $commit['message'] ?? null;
 
                 if (!is_string($message)) return false;
 
-                $message = trim($message);
+                if (trim($message) === '') return false;
 
-                if ($message === '') return false;
+                if (empty($commit['date'])) return false;
 
-                if (preg_match('/^Merge\s/i', $message)) return false;
+                if (!isset($commit['parents'])) return false;
 
-                return !empty($commit['date']);
+                return true;
             })
             ->sortByDesc('date')
-            ->groupBy(function ($commit) {
-                return substr($commit['date'], 0, 10);
-            })
-            ->map(function ($group, $date) {
-                return [
-                    'date' => $date,
-                    'commits' => $group->pluck('message')->values()->all()
-                ];
-            })
-            ->take(200)
             ->values()
             ->all();
 
-        $payload = [
-            'branch' => $request->input('branch'),
-            'commits_by_date' => $commits,
-        ];
-
-        $result = $this->sendChangeLogToIA($options, $payload);
+        $result = $this->sendChangelogToIA($options, $commits);
 
         if ($result['failed']) {
             return response()->json([
@@ -450,7 +440,7 @@ class HomeController extends Controller
         ]);
     }
 
-    private function sendChangeLogToIA(array $options, array $payload): array
+    private function sendChangelogToIA(array $options, array $commits): array
     {
         $apiKey = config('services.cohere.key');
 
@@ -462,21 +452,121 @@ class HomeController extends Controller
             ];
         }
 
-        $prompt = view('prompts.changelog')->render();
+        $filtered = collect($commits)
+            ->filter(function ($commit) {
 
-        $requestPayload = [
+                $message = $commit['message'] ?? null;
+
+                if (!is_string($message)) return false;
+
+                $firstLine = trim(strtok($message, "\n") ?: '');
+
+                if ($firstLine === '') return false;
+
+                if (preg_match('/^Merge\s/i', $firstLine)) return false;
+
+                return true;
+            })
+            ->sortByDesc('date')
+            ->take(2000)
+            ->map(function ($commit) {
+
+                $firstLine = trim(strtok($commit['message'], "\n") ?: '');
+
+                $branch = $commit['branch'] ?? 'branch-desconhecida';
+
+                $date = date('Y-m-d', strtotime($commit['date']));
+
+                return "{$branch} {$date}\n{$firstLine}";
+            })
+            ->values()
+            ->all();
+
+        if (empty($filtered)) {
+            return [
+                'failed' => true,
+                'status' => 422,
+                'details' => 'Nenhum merge commit encontrado.',
+            ];
+        }
+
+        $chunks = array_chunk($filtered, 100);
+        $partialSummaries = [];
+
+        foreach ($chunks as $chunk) {
+
+            \Log::info('Chunk enviado para IA', [
+                'chunk_size' => count($chunk)
+            ]);
+
+            $prompt = view('prompts.partial_changelog')->render();
+
+            $payload = [
+                'model' => config('services.cohere.model', 'command-a-03-2025'),
+                'messages' => [
+                    ['role' => 'system', 'content' => $prompt],
+                    [
+                        'role' => 'user',
+                        'content' => implode("\n\n", $chunk),
+                    ],
+                ],
+            ];
+
+            try {
+                $response = Http::withOptions($options)
+                    ->timeout(240)
+                    ->connectTimeout(30)
+                    ->withHeaders([
+                        'Authorization' => "Bearer {$apiKey}",
+                        'Accept' => 'application/json',
+                        'Content-Type' => 'application/json',
+                    ])
+                    ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $payload);
+            } catch (\Exception $e) {
+                return [
+                    'failed' => true,
+                    'status' => 500,
+                    'details' => $e->getMessage(),
+                ];
+            }
+
+            if (!$response->ok()) {
+                return [
+                    'failed' => true,
+                    'status' => $response->status(),
+                    'details' => $response->body(),
+                ];
+            }
+
+            $body = $response->json();
+            $text = $body['message']['content'][0]['text'] ?? null;
+
+            if (!$text) {
+                return [
+                    'failed' => true,
+                    'status' => 502,
+                    'details' => $body,
+                ];
+            }
+
+            $partialSummaries[] = $text;
+        }
+
+        $finalPrompt = view('prompts.general_changelog')->render();
+
+        $finalPayload = [
             'model' => config('services.cohere.model', 'command-a-03-2025'),
             'messages' => [
-                ['role' => 'system', 'content' => $prompt],
+                ['role' => 'system', 'content' => $finalPrompt],
                 [
                     'role' => 'user',
-                    'content' => json_encode($payload),
+                    'content' => implode("\n\n", $partialSummaries),
                 ],
             ],
         ];
 
         try {
-            $response = Http::withOptions($options)
+            $finalResponse = Http::withOptions($options)
                 ->timeout(240)
                 ->connectTimeout(30)
                 ->withHeaders([
@@ -484,7 +574,7 @@ class HomeController extends Controller
                     'Accept' => 'application/json',
                     'Content-Type' => 'application/json',
                 ])
-                ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $requestPayload);
+                ->post(config('services.cohere.endpoint', 'https://api.cohere.ai/v2/chat'), $finalPayload);
         } catch (\Exception $e) {
             return [
                 'failed' => true,
@@ -493,15 +583,15 @@ class HomeController extends Controller
             ];
         }
 
-        if (!$response->ok()) {
+        if (!$finalResponse->ok()) {
             return [
                 'failed' => true,
-                'status' => $response->status(),
-                'details' => $response->body(),
+                'status' => $finalResponse->status(),
+                'details' => $finalResponse->body(),
             ];
         }
 
-        $body = $response->json();
+        $body = $finalResponse->json();
         $text = $body['message']['content'][0]['text'] ?? null;
 
         if (!$text) {
