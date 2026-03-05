@@ -131,6 +131,64 @@ class HomeController extends Controller
         ]);
     }
 
+    private function fetchCommits(array $options, string $token, string $owner, string $repo, string $branch): array
+    {
+        $page = 1;
+        $perPage = 100;
+        $items = [];
+
+        while (true) {
+            $response = Http::withOptions($options)
+                ->withToken($token)
+                ->get("https://api.github.com/repos/{$owner}/{$repo}/commits", [
+                    'sha' => $branch,
+                    'per_page' => $perPage,
+                    'page' => $page,
+                ]);
+
+            if ($response->failed()) {
+                return [
+                    'failed' => true,
+                    'status' => $response->status(),
+                    'details' => $response->json(),
+                ];
+            }
+
+            $batch = $response->json();
+
+            if (empty($batch)) {
+                break;
+            }
+
+            foreach ($batch as $commit) {
+                $message = $commit['commit']['message'] ?? null;
+                $date = $commit['commit']['author']['date'] ?? null;
+
+                if (!$message || !$date) continue;
+
+                $firstLine = trim(strtok($message ?? '', "\n") ?: '');
+
+                if (!$firstLine) continue;
+
+                if (preg_match('/^Merge\s/i', $firstLine)) continue;
+
+                $items[] = [
+                    'message' => mb_substr($firstLine, 0, 300),
+                    'date' => $date,
+                ];
+            }
+
+            $page++;
+        }
+
+        $items = array_reverse($items);
+
+        return [
+            'failed' => false,
+            'items' => $items,
+        ];
+    }
+
     public function generateDocumentation(Request $request)
     {
         set_time_limit(300);
@@ -331,68 +389,6 @@ class HomeController extends Controller
         ];
     }
 
-    private function fetchCommits(array $options, string $token, string $owner, string $repo, string $branch): array
-    {
-        $page = 1;
-        $perPage = 100;
-        $items = [];
-
-        while (true) {
-            $response = Http::withOptions($options)
-                ->withToken($token)
-                ->get("https://api.github.com/repos/{$owner}/{$repo}/commits", [
-                    'sha' => $branch,
-                    'per_page' => $perPage,
-                    'page' => $page,
-                ]);
-
-            if ($response->failed()) {
-                return [
-                    'failed' => true,
-                    'status' => $response->status(),
-                    'details' => $response->json(),
-                ];
-            }
-
-            $batch = $response->json();
-
-            if (empty($batch)) {
-                break;
-            }
-
-            foreach ($batch as $commit) {
-                $message = $commit['commit']['message'] ?? null;
-                $date = $commit['commit']['author']['date'] ?? null;
-                $sha = $commit['sha'] ?? null;
-                $parents = collect($commit['parents'] ?? [])->pluck('sha')->values()->all();
-
-                if (!$message || !$date) continue;
-
-                $firstLine = trim(strtok($message ?? '', "\n") ?: '');
-
-                if (!$firstLine) continue;
-
-                if (preg_match('/^Merge\s/i', $firstLine)) continue;
-
-                $items[] = [
-                    'sha' => $sha,
-                    'parents' => $parents,
-                    'message' => mb_substr($firstLine, 0, 300),
-                    'date' => $date,
-                ];
-            }
-
-            $page++;
-        }
-
-        $items = array_reverse($items);
-
-        return [
-            'failed' => false,
-            'items' => $items,
-        ];
-    }
-
     public function generateChangelog(Request $request)
     {
         set_time_limit(600);
@@ -417,8 +413,6 @@ class HomeController extends Controller
                 if (trim($message) === '') return false;
 
                 if (empty($commit['date'])) return false;
-
-                if (!isset($commit['parents'])) return false;
 
                 return true;
             })
@@ -463,21 +457,15 @@ class HomeController extends Controller
 
                 if ($firstLine === '') return false;
 
-                if (preg_match('/^Merge\s/i', $firstLine)) return false;
-
-                return true;
+                return !empty($commit['date']);
             })
             ->sortByDesc('date')
-            ->take(2000)
+            ->take(2000) // Pegaremos 2k de commits
             ->map(function ($commit) {
-
+                $date = date('Y-m-d', strtotime($commit['date']));
                 $firstLine = trim(strtok($commit['message'], "\n") ?: '');
 
-                $branch = $commit['branch'] ?? 'branch-desconhecida';
-
-                $date = date('Y-m-d', strtotime($commit['date']));
-
-                return "{$branch} {$date}\n{$firstLine}";
+                return "Release {$date}\n{$firstLine}";
             })
             ->values()
             ->all();
@@ -490,11 +478,11 @@ class HomeController extends Controller
             ];
         }
 
+        // Mandaremos de 100 em 100 para a IA e no final uma outra requisição consolida tudo
         $chunks = array_chunk($filtered, 100);
         $partialSummaries = [];
 
         foreach ($chunks as $chunk) {
-
             \Log::info('Chunk enviado para IA', [
                 'chunk_size' => count($chunk)
             ]);

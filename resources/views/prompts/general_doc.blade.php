@@ -16,8 +16,13 @@ Regras obrigatórias:
 - Unificar todas as informações recebidas.
 - Reescrever o conteúdo como documentação técnica estruturada.
 - Produzir texto final organizado em seções.
-- Faça um resumo de tudo e não ultrapasse 15 sessões.
-- Cada item deve estar em linha separada.
-- Sempre manter linha em branco entre itens.
+- Deveremos ter no máximo 10 sessões, faça um resumo das principais funcionalidades.
 - Não manter numeração original dos textos recebidos.
+
+RESUMO:
+- Queremos saber do que se trata o projeto (Overview) e suas principais funcionalides (sessões)
+
+Exemplo de estrutura:
+
+
 

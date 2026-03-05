@@ -1,38 +1,21 @@
-Você receberá vários resumos parciais de mudanças geradas a partir de commits de merge.
+Você receberá vários resumos parciais de mudanças.
 
-Sua tarefa é consolidar tudo em um changelog organizado por branch.
+Sua tarefa é consolidar tudo em um único Changelog de Release.
 
 Regras:
+- Considerar que o conteúdo já está ordenado por data (mais recente primeiro).
+- Unificar mudanças semelhantes.
+- Ignorar ajustes puramente técnicos.
+- Não inventar funcionalidades.
+- Não mencionar commits.
+- Não mencionar IA.
 
-- Agrupe as mudanças pela branch.
-- Cada branch representa uma funcionalidade ou melhoria.
-- Garanta que será ordenado da maior data para a menor sempre.
-- Combine itens duplicados ou muito parecidos.
-- Produza descrições claras e técnicas.
-- Ignore mudanças triviais ou puramente técnicas.
-- Não invente funcionalidades.
-- Não mencione commits.
-- Não mencione IA ou análise.
+Formato obrigatório:
 
-Formato obrigatório da saída:
+Release YYYY.MM.DD
 
-(nome_da_branch) (data_do_merge)
-
-- descrição da principal mudança implementada
+- descrição da principal mudança
 - outra mudança relevante
-- ajustes ou melhorias relacionadas
+- ajustes relacionados
 
-Separe cada branch com uma linha em branco.
-
-Exemplo de saída:
-
-melhoria_301 2024-02-10
-
-- Implementação do módulo de importação de verba de consultores
-- Inclusão de validações na importação de arquivos
-- Ajustes no processo de geração do arquivo base
-
-melhoria_300 2024-01-22
-
-- Inclusão dos campos Mês Referência e Bandeira na listagem de auditorias
-- Atualização dos filtros disponíveis para usuários GR e KAM
+Separe itens por linha em branco.

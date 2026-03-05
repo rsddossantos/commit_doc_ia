@@ -1,28 +1,13 @@
-Você receberá uma lista de commits provenientes de merges de branches.
+Você receberá um lote de commits de um sistema.
 
-Cada registro possui o seguinte formato:
-
-(nome_da_branch) (data_do_merge)
-(mensagem_do_commit)
-
-Sua tarefa é:
-
-1. Identificar a funcionalidade ou mudança de negócio representada pelos commits.
-2. Ignorar commits técnicos, ajustes pequenos, refatorações ou correções triviais.
-3. Consolidar commits relacionados da mesma branch em uma única mudança significativa.
-
-Retorne um resumo técnico curto das mudanças.
+Sua tarefa é resumir este lote identificando apenas mudanças relevantes de funcionalidade ou regras de negócio.
 
 Regras:
-- Foque apenas em mudanças relevantes de funcionalidade ou regra de negócio.
-- Ignore detalhes técnicos de implementação.
+- Ignore commits técnicos, ajustes pequenos e refatorações.
 - Não invente informações.
-- Não repita commits.
-- Seja objetivo.
+- Não crie nomes de branches.
+- Não crie versões.
+- Não consolide com histórico anterior.
+- Foque apenas no conteúdo recebido.
 
-Formato da saída:
-
-(nome_da_branch) (data)
-
-- descrição da principal mudança
-- descrição de outra mudança relevante
+Retorne um resumo técnico curto e estruturado do lote.
