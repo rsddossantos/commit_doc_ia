@@ -28,18 +28,6 @@ const vuetify = createVuetify({
                     warning: '#fb8c00',
                 },
             },
-            dark: {
-                colors: {
-                    primary: '#667eea',
-                    secondary: '#764ba2',
-                    background: '#2c2c2c',  // cinza do fundo da tela
-                    surface: '#2c2c2c',     // cinza para cards, inputs, colapses
-                    error: '#ff5252',
-                    info: '#2196f3',
-                    success: '#4caf50',
-                    warning: '#fb8c00',
-                },
-            },
         },
     },
     components: vuetifyComponents,
