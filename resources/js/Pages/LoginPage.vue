@@ -50,6 +50,8 @@ function submit() {
 
                     <v-text-field
                         v-model="token"
+                        variant="outlined"
+                        color="primary"
                         label="Entre com seu token Github"
                         type="password"
                         class="login-token-field"
@@ -70,24 +72,20 @@ function submit() {
     </v-app>
 </template>
 
-<style scoped>
+<style>
 .login-background {
     background: linear-gradient(135deg, #667eea, #764ba2);
     min-height: 100vh;
     padding: 0;
 }
 
-.v-text-field input {
-    font-size: 14px;
-    border-radius: 0 !important;
+.login-token-field input:focus {
+    outline: none;
 }
 
-:deep(.login-token-field .v-field__overlay),
-:deep(.login-token-field .v-field),
-:deep(.login-token-field .v-field__outline),
-:deep(.login-token-field .v-field__outline__start),
-:deep(.login-token-field .v-field__outline__end),
-:deep(.login-token-field .v-field__outline__notch) {
-    border-radius: 0 !important;
+.login-token-field .v-field__input:focus {
+    outline: none;
+    box-shadow: none;
 }
+
 </style>
