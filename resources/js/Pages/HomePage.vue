@@ -12,7 +12,7 @@ const isGeneratingChangelog = ref(false)
 const errorMessage = ref('')
 const documentation = ref('')
 const changelog = ref('')
-const compareData = ref(null)
+const commitData = ref(null)
 
 const props = defineProps({
     repos: {
@@ -83,7 +83,7 @@ function resetState() {
     errorMessage.value = ''
     documentation.value = ''
     changelog.value = ''
-    compareData.value = null
+    commitData.value = null
 }
 
 function logout() {
@@ -108,9 +108,10 @@ async function processRepo() {
         const response = await axios.post('/process-main', {
             owner: selectedRepo.value.owner,
             repo: selectedRepo.value.name,
+            default_branch: selectedRepo.value.default_branch
         })
 
-        compareData.value = response.data
+        commitData.value = response.data
 
     } catch (e) {
         const message = e.response?.data?.message || 'Erro não mapeado'
@@ -125,7 +126,7 @@ async function processRepo() {
 }
 
 async function generateDocumentation() {
-    if (!compareData.value?.commits?.length) return
+    if (!commitData.value?.commits?.length) return
 
     errorMessage.value = ''
     documentation.value = ''
@@ -134,8 +135,8 @@ async function generateDocumentation() {
 
     try {
         const response = await axios.post('/generate-documentation', {
-            branch: compareData.value.branch,
-            commits: compareData.value.commits
+            branch: commitData.value.branch,
+            commits: commitData.value.commits
         })
 
         documentation.value = response.data.documentation
@@ -153,7 +154,7 @@ async function generateDocumentation() {
 }
 
 async function generateChangelog() {
-    if (!compareData.value?.commits?.length) return
+    if (!commitData.value?.commits?.length) return
 
     errorMessage.value = ''
     documentation.value = ''
@@ -162,8 +163,8 @@ async function generateChangelog() {
 
     try {
         const response = await axios.post('/generate-changelog', {
-            branch: compareData.value.branch,
-            commits: compareData.value.commits
+            branch: commitData.value.branch,
+            commits: commitData.value.commits
         })
 
         changelog.value = response.data.changelog
@@ -278,7 +279,7 @@ async function generateChangelog() {
                     </v-col>
                 </v-row>
 
-                <v-row class="mt-12" v-if="selectedRepo && !compareData">
+                <v-row class="mt-12" v-if="selectedRepo && !commitData">
                     <v-col cols="12" class="d-flex justify-center">
                         <v-btn
                             color="primary"
@@ -292,20 +293,23 @@ async function generateChangelog() {
                     </v-col>
                 </v-row>
 
-                <v-row class="mt-6" v-if="compareData">
+                <v-row class="mt-6" v-if="commitData">
                     <v-col cols="12">
                         <v-alert type="info" variant="tonal">
                             <div>
-                                Branch: <strong>{{ compareData.branch }}</strong>
+                                Repositório: <strong>{{ commitData.repo }}</strong>
                             </div>
                             <div>
-                                {{ compareData.total_commits }} commits encontrados.
+                                Branch: <strong>{{ commitData.branch }}</strong>
+                            </div>
+                            <div>
+                                {{ commitData.total_commits }} commits encontrados.
                             </div>
                         </v-alert>
                     </v-col>
                 </v-row>
 
-                <v-row class="mt-6" v-if="compareData">
+                <v-row class="mt-6" v-if="commitData">
                     <v-col cols="12" md="6">
                         <v-btn
                             color="primary"
@@ -364,7 +368,7 @@ async function generateChangelog() {
                     <v-col cols="12">
                         <v-card>
                             <v-card-title>
-                                Changelog via IA
+                                Changelog via IA Cohere
                             </v-card-title>
                             <v-card-text style="white-space: pre-line;">
                                 {{ changelog }}
