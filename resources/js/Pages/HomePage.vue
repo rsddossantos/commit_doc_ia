@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { router } from '@inertiajs/vue3'
 import axios from 'axios'
 import SearchInput from "@/Components/SearchInput.vue"
@@ -25,11 +25,9 @@ const props = defineProps({
     }
 })
 
-const repos = reactive(props.repos || [])
-
 const primaryOwner = computed(() => {
     const counts = new Map()
-    for (const repo of repos) {
+    for (const repo of props.repos) {
         const owner = repo.owner
         if (!owner) continue
         counts.set(owner, (counts.get(owner) || 0) + 1)
@@ -50,8 +48,8 @@ watch(errorMessage, async (val) => {
 })
 
 const filteredRepos = computed(() => {
-    if (!search.value) return repos
-    return repos.filter(repo =>
+    if (!search.value) return props.repos
+    return props.repos.filter(repo =>
         repo.name.toLowerCase().includes(search.value.toLowerCase())
     )
 })
